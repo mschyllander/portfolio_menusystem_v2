@@ -267,7 +267,7 @@ static void c64pnDrawTyping(SDL_Renderer* r, TTF_Font* font) {
     std::string line = C64PN.typedLine;
     c64pnDrawText(r, font, line.c_str(), C64PN.textCol, x, y);
     if (C64PN.cursorOn) {
-        int approxW = (int)line.size() * (C64PN.cellW * 0.6f);
+        int approxW = static_cast<int>(line.size() * C64PN.cellW * 0.6f);
         SDL_Rect cur{ x + approxW + 2, y + C64PN.cellH/2, C64PN.cellW/2, C64PN.cellH/6 };
         c64pnFillRect(r, cur, C64PN.textCol);
     }
@@ -296,6 +296,9 @@ static void c64pnDrawPattern(SDL_Renderer* r) {
         }
     }
 }
+
+void updateFireworks(float dt);
+void renderFireworks(SDL_Renderer* ren, float dt);
 
 static void renderC64PRINT_NEW(SDL_Renderer* renderer, TTF_Font* font, float dt, int screenW, int screenH) {
     if (!C64PN.started) c64pnStart(screenW, screenH);
@@ -327,10 +330,7 @@ static void renderC64PRINT_NEW(SDL_Renderer* renderer, TTF_Font* font, float dt,
 
         case C64PrintNew::FIREWORKS: {
             c64pnDrawPattern(renderer);
-            extern void updateFireworks(float);
-            extern void renderFireworks(SDL_Renderer*);
-            updateFireworks(dt);
-            renderFireworks(renderer);
+            renderFireworks(renderer, dt);
         } break;
 
         case C64PrintNew::DONE:
@@ -508,16 +508,6 @@ static void applyDotMask(SDL_Renderer* ren, const SDL_Rect& dst) {
             SDL_RenderCopy(ren, m, &src, &d);
         }
     }
-}
-
-static void applyScanlines(SDL_Renderer* ren, const SDL_Rect& dst) {
-    // tunna, halvtransparenta svarta linjer varannan rad
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(ren, 0, 0, 0, 55);
-    for (int y = dst.y; y < dst.y + dst.h; y += 2) {
-        SDL_RenderDrawLine(ren, dst.x, y, dst.x + dst.w, y);
-    }
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
 }
 
 // 1x2 pattern: dark row + transparent row, tiled vertically
@@ -750,11 +740,9 @@ void renderSnakeGame(SDL_Renderer* ren);
 void initPongGame();
 void updatePongGame(float dt);
 void renderPongGame(SDL_Renderer* ren, float dt);       // main one
-void renderFireworks(SDL_Renderer*, float dt);
 void renderLogoWithReflection(SDL_Renderer*, SDL_Texture*, int baseX);
 void startExitExplosion(bool returnToMenu = false, bool nextEffect = false, int nextIndex = 0);
 void startStarTransition(int newIndex, bool toMenu = false);
-static void drawThickLine(SDL_Renderer* ren, int x1, int y1, int x2, int y2, int t);
 static void drawSmallFilledCircle(SDL_Renderer* ren, int cx, int cy, int radius);
 static void renderPrismSidesWithTexture(SDL_Renderer* ren, SDL_Texture* tex,
     int sides, float ax, float ay,
@@ -3471,6 +3459,7 @@ void renderC64Window(int screenW, int screenH) {
             drawLine(runStr.c_str(), 5);
         }
     }
+}
 #endif // old C64 implementation
 
 
