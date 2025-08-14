@@ -3040,11 +3040,6 @@ void renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
         renderPongGame(ren, deltaTime);
         break;
 
-    case VIEW_C64_10PRINT:
-		updateC64Window(deltaTime);
-        renderC64Window(SCREEN_WIDTH, SCREEN_HEIGHT);
-		break;
-
     default: break;
     }
 }
@@ -3237,8 +3232,8 @@ void updateC64Window(float dt) {
     C64Time += dt;
 
     if (C64DecompPhase) {
-        // kör "decrunch" ~2.5s
-        const float decompDur = 5.0f;
+        // kör "decrunch" en kort stund
+        const float decompDur = 2.5f;
         C64Decomp = std::min(1.f, C64Time / decompDur);
         if (C64Decomp >= 1.f) {
             C64DecompPhase = false;
@@ -3249,16 +3244,10 @@ void updateC64Window(float dt) {
     else {
         // reveal X cells per second
         int total = C64GridW * C64GridH;
-        int add = int(2200.f * dt); // testa fart; 2200 celler/s
+        int add = int(2200.f * dt); // 2200 celler/s
         C64Reveal = std::min(total, C64Reveal + add);
         if (C64Reveal == total) {
-            // håll uppe bilden en stund och markera klar
-            static float hold = 0.f;
-            hold += dt;
-            if (hold > 1.0f) {
-                C64Done = true;
-                hold = 0.f;
-            }
+            C64Done = true; // mönstret är klart, men vi låter det ligga kvar
         }
     }
 }
@@ -3633,7 +3622,9 @@ int main(int argc, char* argv[]) {
             SDL_RenderFlush(renderer);
 
             if (!starTransition) {
-                renderPortfolioEffect(renderer, deltaTime);
+                if (currentPortfolioSubState != VIEW_C64_10PRINT) {
+                    renderPortfolioEffect(renderer, deltaTime);
+                }
             }
 
             // === C64 10 PRINT ===
@@ -3649,14 +3640,7 @@ int main(int argc, char* argv[]) {
                 ensureGLContextCurrent();
                 updateC64Window(deltaTime);
                 renderC64Window(SCREEN_WIDTH, SCREEN_HEIGHT);
-
-                // usedGLThisFrame = true;
-
-                // när flyget är klart -> vidare till nästa effekt
-                if (c64WindowIsDone()) {
-                    int idx = (currentEffectIndex + 1) % NUM_EFFECTS;
-                    startStarTransition(idx);
-                }
+                usedGLThisFrame = true;
             }
 
             SDL_Point mp{ mouseX, mouseY };
