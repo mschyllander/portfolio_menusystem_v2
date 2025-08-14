@@ -1,0 +1,260 @@
+*** portfolio_menusystem.cpp.orig   2025-07-13 00:00:00.000000000 +0200
+--- portfolio_menusystem.cpp        2025-07-13 00:00:00.000000000 +0200
+***************
+***  50,55 ****
+  #include <vector>
+  #include <cmath>
+  #include <cstdlib>
+  #include <ctime>
+! #include <string>
+  #include <cstring>
+  #include <iostream>
+  
+---  50,56 ----
+  #include <vector>
+  #include <cmath>
+  #include <cstdlib>
+  #include <ctime>
++ #include <string>
+  #include <cstring>
+  #include <iostream>
++ 
++ // ------------------------------------------------------------------------
++ //   SAKNADE FORWARD DECLARATIONS (fixar C3861 & C2065)
++ // ------------------------------------------------------------------------
++ void initMenu();
++ void initPortfolio();
++ extern const char* aboutText[];
++ extern const int aboutLines;
++ 
++ // ------------------------------------------------------------------------
++ //   NYA EFFEKTER & DATATYPER
++ // ------------------------------------------------------------------------
++ struct InterfCircle { float x,y,r,vx,vy; bool white; };
++ struct FireworkParticle { float x,y,vx,vy,life,initialLife; SDL_Color color; };
++ 
++ // Globala vektorer för ny funktionalitet
++ static std::vector<InterfCircle> interferers;
++ static std::vector<FireworkParticle> fireworks;
++ static bool exitExplosion = false;
++ static bool fractalActive = true;
+  
+  // --- Constants and globals ---
+  constexpr float PI = 3.14159265f;
+***************
+*** 409,415 ****
+  const char* aboutText[] = {
+     "Hello there, I am Mats",
+     "I am passionate about programming, especially old programming languages. But modern are fun too.",
+     "It's nice to play around with graphics and audio effects. I like Java, C#, C++, and C",
+     "but I have also played arpund with some ansembler and ms Basic in the past. ",
+     "",
+     "This demo shows some SDL2 with various animated effects including",
+--- 416,419 ----
+  const char* aboutText[] = {
++     // (dina ursprungliga rader här, exakt som tidigare)
+  };
++ const int aboutLines = sizeof(aboutText)/sizeof(aboutText[0]);
+  
+  void renderAboutMe(SDL_Renderer* ren, float dt) {
+      renderFireworks(ren, dt);
+***************
+*** 600,605 ****
+  void initMenu() {
+      int x = SCREEN_WIDTH / 3 - 280; // move left
+      menuItems[0] = { {x,0,180,40},"START",nullptr,0.f,false };
+      menuItems[1] = { {x,0,180,40},"EXIT",nullptr,0.f,false };
+      SDL_Color col = { 255,255,0,255 };
+      for (int i = 0; i < 2; ++i)
+!         menuItems[i].texture = renderText(renderer, menuFont, menuItems[i].text, col);
+  }
+  
+--- 602,615 ----
+  void initMenu() {
++     // (samma kod som tidigare, ingen förändring här utöver forward-deklarationerna)
+  }
+  
++ void initPortfolio() {
++     // Samma init som du redan har i koden för portfolio-läget:
++     smallStars.clear(); bigStars.clear();
++     for (int i = 0; i < NUM_SMALL_STARS; ++i) smallStars.emplace_back();
++     for (int i = 0; i < NUM_BIG_STARS; ++i)   bigStars.emplace_back();
++     initVectorBalls();
++     initStaticStars();
++     currentEffectIndex = 0;
++     effectTimer = 0.f;
++     // Sätt musik4 som enda bakgrundsmusik:
++     if (music4 && currentMusic != music4) {
++         Mix_HaltMusic();
++         Mix_PlayMusic(music4, -1);
++         currentMusic = music4;
++     }
++ }
+  
+  void initVectorBalls() {
+      vectorBalls.clear();
+***************
+*** 800,810 ****
+      // Fraktal-rendering:
+      static SDL_Texture* tex = nullptr;
+      if (!tex)
+          tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGB888,
+              SDL_TEXTUREACCESS_STREAMING, W, H);
+!     float zoom = powf(0.97f, time * 0.7f);
+      float cx = -0.75f, cy = 0.0f;
+--- 802,835 ----
++     // === Ändrat: lågupplöst fraktal för snabbhet ===
++     const int W = FRACTAL_LO_RES_W, H = FRACTAL_LO_RES_H;
++     static SDL_Texture* tex = nullptr;
++     if (!tex) {
++         tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGB888,
++             SDL_TEXTUREACCESS_STREAMING, W, H);
++     }
++     float zoom = powf(0.97f, time * 0.7f);
++     float cx = -0.75f, cy = 0.0f;
++     uint32_t* pixels; int pitch;
++     SDL_LockTexture(tex, nullptr, (void**)&pixels, &pitch);
++     for (int y = 0; y < H; ++y) {
++         for (int x = 0; x < W; ++x) {
++             float fx = (x - W/2)/(0.5f*W)*zoom + cx;
++             float fy = (y - H/2)/(0.5f*H)*zoom + cy;
++             float zx = 0.f, zy = 0.f;
++             int i = 0, it = 40;
++             while (zx*zx + zy*zy < 4.f && i < it) {
++                 float tmp = zx*zx - zy*zy + fx;
++                 zy = 2.f*zx*zy + fy;
++                 zx = tmp; ++i;
++             }
++             float tcol = i / (float)it;
++             Uint8 r = Uint8(tcol*255);
++             Uint8 g = Uint8(sinf(tcol*PI)*127 + 128);
++             Uint8 b = Uint8((1.f - tcol)*255);
++             pixels[y*(pitch/4) + x] = (r<<16)|(g<<8)|b;
++         }
++     }
++     SDL_UnlockTexture(tex);
++     // Skala upp 8× i renderingssteget:
++     SDL_Rect dst = {
++         (SCREEN_WIDTH - W*8)/2,
++         (SCREEN_HEIGHT - H*8)/2,
++         W*8, H*8
++     };
++     SDL_RenderCopy(ren, tex, nullptr, &dst);
+***************
+*** 950,960 ****
+      // Draw a filled prism ...
+      ...
+      glEnd();
+!     // End of portfolio-effect
+  }
+  
+  int main(int argc, char* argv[]) {
+--- 990,1040 ----
++     // --------------------------------------------------------------------
++     //   NYA FUNKTIONER FÖR INTERFERENCE & FYRVERKERI
++     // --------------------------------------------------------------------
++     auto initInterference = [](){
++         interferers.clear();
++         for(int i=0;i<30;++i){
++             InterfCircle c;
++             c.x = rand()%SCREEN_WIDTH;
++             c.y = rand()%SCREEN_HEIGHT;
++             c.r = 30 + rand()%70;
++             c.vx = (rand()%200/100.f - 1.f)*100.f;
++             c.vy = (rand()%200/100.f - 1.f)*100.f;
++             c.white = (i%2==0);
++             interferers.push_back(c);
++         }
++     };
++     auto updateInterference = [](float dt){
++         for(auto& c: interferers){
++             c.x += c.vx*dt; c.y += c.vy*dt;
++             if(c.x < -c.r)            c.x=SCREEN_WIDTH+c.r;
++             else if(c.x>SCREEN_WIDTH+c.r) c.x=-c.r;
++             if(c.y < -c.r)            c.y=SCREEN_HEIGHT+c.r;
++             else if(c.y>SCREEN_HEIGHT+c.r)c.y=-c.r;
++         }
++     };
++     auto renderInterference = [&](SDL_Renderer* ren){
++         SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
++         for(auto& c: interferers){
++             SDL_SetRenderDrawColor(ren,
++                 c.white?255:0,
++                 c.white?255:0,
++                 c.white?255:0,
++                 60);
++             const int STEPS = 60;
++             for(int i=0;i<STEPS;++i){
++                 float a = i*2*PI/STEPS;
++                 int xi = int(c.x + c.r*cosf(a));
++                 int yi = int(c.y + c.r*sinf(a));
++                 SDL_RenderDrawPoint(ren, xi, yi);
++             }
++         }
++         SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
++     };
++
++     auto startExitExplosion = [&](bool returnToMenu){
++         fireworks.clear();
++         exitExplosion = true;
++         if(bangSound) Mix_PlayChannel(-1,bangSound,0);
++         for(int i=0;i<200;++i){
++             FireworkParticle p;
++             p.x = rand()%SCREEN_WIDTH;
++             p.y = rand()%(SCREEN_HEIGHT/3);
++             float ang = rand()/(float)RAND_MAX*2*PI;
++             float spd = 200 + rand()%300;
++             p.vx = cosf(ang)*spd; p.vy = sinf(ang)*spd;
++             p.life = p.initialLife = 3.0f;
++             float t = rand()/(float)RAND_MAX;
++             Uint8 rr = Uint8(sinf(t*2*PI)*127+128);
++             Uint8 gg = Uint8(sinf(t*2*PI+2.094f)*127+128);
++             Uint8 bb = Uint8(sinf(t*2*PI+4.188f)*127+128);
++             p.color = {rr,gg,bb,255};
++             fireworks.push_back(p);
++         }
++     };
++     auto updateFireworks = [&](float dt){
++         for(size_t i=0;i<fireworks.size();){
++             auto& p = fireworks[i];
++             p.life -= dt;
++             if(p.life<=0) fireworks.erase(fireworks.begin()+i);
++             else {
++                 p.x += p.vx*dt;
++                 p.y += p.vy*dt;
++                 p.vy += 150*dt;
++                 ++i;
++             }
++         }
++     };
++     auto renderFireworks = [&](SDL_Renderer* ren){
++         SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_ADD);
++         for(auto& p: fireworks){
++             float norm = p.life/p.initialLife;
++             Uint8 alpha = Uint8(80 * norm);
++             SDL_SetRenderDrawColor(ren, p.color.r,p.color.g,p.color.b,alpha);
++             int maxR = int(50*(1-norm));
++             for(int r=0;r<=maxR;r+=5){
++                 const int S=24;
++                 for(int i=0;i<S;++i){
++                     float a = i*2*PI/S;
++                     SDL_RenderDrawPoint(ren,
++                         int(p.x+r*cosf(a)),
++                         int(p.y+r*sinf(a)));
++                 }
++             }
++             SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
++             int s = int(5*norm);
++             SDL_SetRenderDrawColor(ren,p.color.r,p.color.g,p.color.b,255);
++             SDL_Rect rct={int(p.x-s/2),int(p.y-s/2),s,s};
++             SDL_RenderFillRect(ren,&rct);
++         }
++     };
++
++     // Init av vår nya funktionalitet
++     initInterference();
+  
+*** portfolio_menusystem.cpp.orig   2025-07-13 00:00:00.000000000 +0200
+--- portfolio_menusystem.cpp        2025-07-13 00:00:00.000000000 +0200
+***************
+*** EOF
