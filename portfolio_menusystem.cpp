@@ -3018,6 +3018,7 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
         renderPongGame(ren, deltaTime);
         break;
 
+
     case VIEW_C64_10PRINT: {
         static bool c64Started = false;
         if (!c64Started) {
@@ -3237,6 +3238,7 @@ void updateC64Window(float dt) {
     C64Time += dt;
 
     if (C64DecompPhase) {
+
         const float decompDur = 2.5f;
         C64Decomp = std::min(1.f, C64Time / decompDur);
         if (C64Decomp >= 1.f) {
@@ -3256,6 +3258,12 @@ void updateC64Window(float dt) {
         C64Reveal = std::min(total, C64Reveal + add);
         if (C64Reveal == total) {
             C64Done = true;
+
+        int add = int(2200.f * dt); // 2200 celler/s
+        C64Reveal = std::min(total, C64Reveal + add);
+        if (C64Reveal == total) {
+            C64Done = true; // mönstret är klart, men vi låter det ligga kvar
+
         }
     }
 }
@@ -3643,7 +3651,14 @@ int main(int argc, char* argv[]) {
             SDL_RenderFlush(renderer);
 
             if (!starTransition) {
+
                 usedGLThisFrame = renderPortfolioEffect(renderer, deltaTime);
+                usedGLThisFrame = renderPortfolioEffect(renderer, deltaTime);
+
+                if (currentPortfolioSubState != VIEW_C64_10PRINT) {
+                    renderPortfolioEffect(renderer, deltaTime);
+                }
+
             }
 
             if (currentPortfolioSubState != VIEW_C64_10PRINT) {
@@ -3654,6 +3669,7 @@ int main(int argc, char* argv[]) {
                 if (hovBack && !backWasHovered && hoverSound) {
                     Mix_PlayChannel(-1, hoverSound, 0);
                     backWasHovered = true;
+
                 }
                 else if (!hovBack) {
                     backWasHovered = false;
@@ -3661,6 +3677,93 @@ int main(int argc, char* argv[]) {
                 if (hovNext && !nextWasHovered && hoverSound) {
                     Mix_PlayChannel(-1, hoverSound, 0);
                     nextWasHovered = true;
+
+                }
+
+                else if (!hovBack) {
+                    backWasHovered = false;
+                }
+                if (hovNext && !nextWasHovered && hoverSound) {
+                    Mix_PlayChannel(-1, hoverSound, 0);
+                    nextWasHovered = true;
+
+
+                // uppdatera + rendera
+                ensureGLContextCurrent();
+                updateC64Window(deltaTime);
+                renderC64Window(SCREEN_WIDTH, SCREEN_HEIGHT);
+                usedGLThisFrame = true;
+            }
+
+            SDL_Point mp{ mouseX, mouseY };
+            bool hovBack = SDL_PointInRect(&mp, &backButtonRect);
+            bool hovNext = SDL_PointInRect(&mp, &nextButtonRect);
+            bool hovQuit = SDL_PointInRect(&mp, &quitButtonRect);
+            if (hovBack && !backWasHovered && hoverSound) {
+                Mix_PlayChannel(-1, hoverSound, 0);
+                backWasHovered = true;
+            }
+            else if (!hovBack) {
+                backWasHovered = false;
+            }
+            if (hovNext && !nextWasHovered && hoverSound) {
+                Mix_PlayChannel(-1, hoverSound, 0);
+                nextWasHovered = true;
+            }
+            else if (!hovNext) {
+                nextWasHovered = false;
+            }
+            if (hovQuit && !quitWasHovered && hoverSound) {
+                Mix_PlayChannel(-1, hoverSound, 0);
+                quitWasHovered = true;
+            }
+            else if (!hovQuit) {
+                quitWasHovered = false;
+            }
+
+            backHoverAnim += (hovBack ? 1.f : -1.f) * deltaTime * 6.f;
+            backHoverAnim = clampValue(backHoverAnim, 0.f, 1.f);
+            nextHoverAnim += (hovNext ? 1.f : -1.f) * deltaTime * 6.f;
+            nextHoverAnim = clampValue(nextHoverAnim, 0.f, 1.f);
+            quitHoverAnim += (hovQuit ? 1.f : -1.f) * deltaTime * 6.f;
+            quitHoverAnim = clampValue(quitHoverAnim, 0.f, 1.f);
+
+            SDL_Color bc = hovBack ? kMonoGreenHover : kMonoGreenBase;
+            SDL_Color sc = hovNext ? kMonoGreenHover : kMonoGreenBase;
+            SDL_Color qc = hovQuit ? kMonoGreenHover : kMonoGreenBase;
+
+            SDL_Texture* backTex = renderText(renderer, menuFont, "[Back]", bc);
+            SDL_Texture* nextTex = renderText(renderer, menuFont, "[Next]", sc);
+            SDL_Texture* quitTex = renderText(renderer, menuFont, "[Main]", qc);
+
+            SDL_Rect bdst = backButtonRect; bdst.y -= static_cast<int>(6.f * backHoverAnim); // cast
+            SDL_Rect ndst = nextButtonRect; ndst.y -= static_cast<int>(6.f * nextHoverAnim); // cast
+            SDL_Rect qdst = quitButtonRect; qdst.y -= static_cast<int>(6.f * quitHoverAnim); // cast
+
+            SDL_RenderCopy(renderer, backTex, nullptr, &bdst);
+            SDL_RenderCopy(renderer, nextTex, nullptr, &ndst);
+            SDL_RenderCopy(renderer, quitTex, nullptr, &qdst);
+
+            applyDotMask(renderer, bdst);
+            applyScanlines(renderer, bdst, 2);
+            applyDotMask(renderer, ndst);
+            applyScanlines(renderer, ndst, 2);
+            applyDotMask(renderer, qdst);
+            applyScanlines(renderer, qdst, 2);
+
+            SDL_DestroyTexture(backTex);
+            SDL_DestroyTexture(nextTex);
+            SDL_DestroyTexture(quitTex);
+
+            if (mouseClick && hovBack && !starTransition) {
+                int idx = (currentEffectIndex - 1 + NUM_EFFECTS) % NUM_EFFECTS;
+                startStarTransition(idx);
+
+            }
+            else if (mouseClick && hovNext && !starTransition) {
+                if (currentPortfolioSubState == VIEW_C64_10PRINT) {
+                    // NEXT i C64-vyn triggar bara flyganimationen i rutan
+                    c64RequestFly();
                 }
                 else if (!hovNext) {
                     nextWasHovered = false;
