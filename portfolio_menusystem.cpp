@@ -3254,16 +3254,10 @@ void updateC64Window(float dt) {
         }
     } else {
         int total = C64GridW * C64GridH;
-        int add = int(2200.f * dt);
-        C64Reveal = std::min(total, C64Reveal + add);
-        if (C64Reveal == total) {
-            C64Done = true;
-
         int add = int(2200.f * dt); // 2200 celler/s
         C64Reveal = std::min(total, C64Reveal + add);
         if (C64Reveal == total) {
             C64Done = true; // mönstret är klart, men vi låter det ligga kvar
-
         }
     }
 }
