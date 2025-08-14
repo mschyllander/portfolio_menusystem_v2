@@ -42,200 +42,305 @@
 #include <random>
 
 
+
 SDL_Window* gWindow = nullptr;
 SDL_GLContext gGL = nullptr;
-
-// --- C64 10 PRINT: forward declarations (måste synas före första anropet) ---
-void initC64Window(int screenW, int screenH);
-void startC64Window();
-void updateC64Window(float dt);
-bool c64WindowIsDone();
-void c64RequestFly();
-void renderC64Window(int screenW, int screenH);
-
-// Ritar en SDL_Texture som ett overlay i GL-pixelkoordinater (0..screenW, 0..screenH)
-void glDrawSDLTextureOverlay(SDL_Texture* tex, int x, int y, int w, int h, int screenW, int screenH) {
-    if (!tex) return;
-
-    // Gör ortho (compat), ingen depth/cull
-    glMatrixMode(GL_PROJECTION);
-    glPushMatrix();
-    glLoadIdentity();
-    glOrtho(0, screenW, screenH, 0, -1, 1);
-
-    glMatrixMode(GL_MODELVIEW);
-    glPushMatrix();
-    glLoadIdentity();
-
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
-    glEnable(GL_TEXTURE_2D);
-
-    float tw, th;
-    if (SDL_GL_BindTexture(tex, &tw, &th) != 0) return; // renderer måste vara OpenGL-backend
-
-    glColor4f(1, 1, 1, 1);
-    glBegin(GL_QUADS);
-    glTexCoord2f(0, 0); glVertex2f((float)x, (float)y);
-    glTexCoord2f(tw, 0); glVertex2f((float)(x + w), (float)y);
-    glTexCoord2f(tw, th); glVertex2f((float)(x + w), (float)(y + h));
-    glTexCoord2f(0, th); glVertex2f((float)x, (float)(y + h));
-    glEnd();
-
-    SDL_GL_UnbindTexture(tex);
-    glDisable(GL_TEXTURE_2D);
-
-    glPopMatrix();
-    glMatrixMode(GL_PROJECTION);
-    glPopMatrix();
-    glMatrixMode(GL_MODELVIEW);
-}
-
-// --- C64 shaders (globala strängar) ---
-static const char* c64_vs = R"GLSL(
-#version 120
-attribute vec2 aPos;
-varying vec2 vUV;
-void main(){
-    vUV = aPos * 0.5 + 0.5;
-    gl_Position = vec4(aPos, 0.0, 1.0);
-}
-)GLSL";
-
-// === C64 10 PRINT — vertex shader (panel + bg i en pass) ===
-static const char* c64_fs = R"GLSL(
-// C64 10 PRINT — fragment shader (panel + decrunch bg + gated reveal)
-#version 120
-varying vec2 vUV;
-
-uniform ivec2  uGrid;           // gridW, gridH
-uniform int    uRevealCount;    // hur många celler visade
-uniform float  uThickness;      // linjetjocklek (cell-UV)
-uniform vec3   uInk;            // linjefärg (nära vit)
-uniform vec3   uBG;             // panel bg (C64-blå)
-uniform vec3   uEdge;           // panelens kantfärg
-uniform vec4   uPanelRect;      // {cx,cy,w,h} i [0..1], center + size
-uniform float  uTime;           // sekunder
-uniform float  uDecomp;         // 0..1, dekomprimeringsprogress
-
-// SDF: avstånd till linjesegment
-float sdSegment(vec2 p, vec2 a, vec2 b){
-    vec2 pa = p - a, ba = b - a;
-    float h = clamp(dot(pa,ba)/max(dot(ba,ba),1e-6), 0.0, 1.0);
-    return length(pa - ba*h);
-}
-
-// Litet brus
-float hash21(vec2 p){
-    p = fract(p*vec2(123.34, 456.21));
-    p += dot(p, p + 34.345);
-    return fract(p.x*p.y);
-}
-
-// Decrunch-bakgrund med scanbars/snow/progressbar
-vec3 decrunchBG(vec2 uv, float t, float prog){
-    float bars = smoothstep(0.0, 0.2, 0.5 + 0.5 * sin(uv.y*120.0 + t*40.0));
-    float snow = step(0.965, hash21(uv*vec2(640.0, 360.0) + t*60.0));
-    float band = smoothstep(0.45,0.47, abs(uv.y-0.7));
-    float scan = 0.25*bars + 0.10*snow + 0.08*band;
-
-    float barY = 0.06, barH = 0.012;
-    float x = uv.x, y = uv.y;
-    float frameOK = step(barY, y) * step(y, barY+barH) * step(0.12, x) * step(x, 0.88);
-    float fill    = step(0.12, x) * step(x, mix(0.12, 0.88, prog)) * step(barY, y) * step(y, barY+barH);
-
-    vec3 base     = vec3(0.02, 0.03, 0.05) + scan;
-    vec3 frameCol = vec3(0.10, 1.00, 0.70);
-    vec3 fillCol  = vec3(0.20, 0.90, 0.40);
-
-    float edgeX = step(0.119, x) * step(x, 0.881);
-    float edgeY1 = step(barY, y) * step(y, barY + 0.002);
-    float edgeY2 = step(barY + barH - 0.002, y) * step(y, barY + barH);
-
-    vec3 progBar = base + frameCol * (edgeX * (edgeY1 + edgeY2)) + fillCol * fill * 0.9;
-    // Om vi inte ligger ovanför progressbaren, lämna bara base+scan
-    return mix(base, progBar, frameOK);
-}
-
-void main(){
-    vec2 uv = vUV;
-
-    // Panel-rect
-    vec2 c = uPanelRect.xy;
-    vec2 s = uPanelRect.zw;
-    vec2 minP = c - 0.5*s;
-    vec2 maxP = c + 0.5*s;
-
-    bool inPanel = all(greaterThanEqual(uv, minP)) && all(lessThanEqual(uv, maxP));
-
-    // Utanför panelen: kör decrunch tills klar, SEN transparent så SDL kan synas
-    if (!inPanel) {
-        if (uDecomp < 1.0) {
-            gl_FragColor = vec4(decrunchBG(uv, uTime, uDecomp), 1.0);
-        } else {
-            gl_FragColor = vec4(0.0); // transparent
-        }
-        return;
-    }
-
-    // Panel-UV [0..1]
-    vec2 puv = clamp((uv - minP) / max(s, vec2(1e-6)), 0.0, 1.0);
-
-    // Tunn bevel/ram
-    float pad = 0.015;
-    float inner = step(pad, puv.x) * step(pad, puv.y) * step(pad, 1.0-puv.x) * step(pad, 1.0-puv.y);
-    vec3  base = mix(uEdge, uBG, 0.95);
-    vec3  panelCol = mix(uEdge * 0.6 + uBG * 0.4, base, inner);
-
-    // Under decrunch: visa bara panelfärg (ingen reveal ännu)
-    if (uDecomp < 1.0) {
-        gl_FragColor = vec4(panelCol, 1.0);
-        return;
-    }
-
-    // Grid + reveal i TOP-LEFT-ordning (radvis)
-    ivec2 grid  = uGrid;
-    vec2  g     = vec2(grid);
-    vec2  cellf = floor(puv * g);
-
-    int colIdx      = int(clamp(cellf.x, 0.0, float(grid.x - 1)));
-    int rowFromTop  = int(clamp(float(grid.y - 1) - cellf.y, 0.0, float(grid.y - 1)));
-    int idx         = rowFromTop * grid.x + colIdx;
-
-    if (idx >= uRevealCount) {
-        gl_FragColor = vec4(panelCol, 1.0);
-        return;
-    }
-
-    // Lokala cell-coords
-    ivec2 cell = ivec2(colIdx, int(clamp(cellf.y, 0.0, float(grid.y - 1))));
-    vec2  f    = fract(puv * g);
-
-    // '/' eller '\'
-    float pick = hash21(vec2(cell));
-
-    // Lite fetare C64-slash (justeras med uThickness)
-    float d = (pick < 0.5)
-        ? sdSegment(f, vec2(0.05,0.05), vec2(0.95,0.95))
-        : sdSegment(f, vec2(0.05,0.95), vec2(0.95,0.05));
-
-    // Linjemask (sätt uThickness ~ 0.12 från CPU)
-    float lineMask = smoothstep(uThickness, 0.0, d);
-
-    // Subtila scanlines i panelen
-    float scan = 1.0 - 0.06 * (0.5 + 0.5 * sin(puv.y * 1200.0));
-
-    // Slutfärg
-    vec3 finalCol = mix(panelCol, uInk, lineMask) * scan;
-    gl_FragColor = vec4(clamp(finalCol, 0.0, 1.0), 1.0);
-}
-)GLSL";
-
 
 static inline void ensureGLContextCurrent() {
     if (SDL_GL_GetCurrentContext() != gGL) {
         SDL_GL_MakeCurrent(gWindow, gGL);
     }
+}
+
+/**** ===========================================================
+     C64PRINT_NEW — single-file implementation (SDL2 drawing)
+     Stages: DECOMPRESS -> BOOTSCR -> TYPING -> RUNNING -> FIREWORKS -> DONE
+============================================================== */
+
+struct C64PrintNew {
+    enum Phase { DECOMPRESS, BOOTSCR, TYPING, RUNNING, FIREWORKS, DONE } phase = DECOMPRESS;
+
+    // Timing
+    float t = 0.f;                 // stage timer
+    float total = 0.f;             // total time, if you want to tweak transitions
+    float decompressDur = 2.4f;
+    float bootscrDur    = 1.1f;
+    float typingSpeed   = 55.f;    // chars/sec while "typing"
+    float runDrawSpeed  = 850.f;   // cells/sec while drawing 10-PRINT pattern
+    float runHoldMin    = 5.0f;    // minimum seconds to keep drawing before fireworks
+    float fireworksDur  = 2.2f;
+
+    // Typing simulation
+    std::string toType = "10 PRINT CHR$(205.5+RND(1));:GOTO 10";
+    std::string typedLine;
+    float typedCount = 0.f;
+    bool  cursorOn   = true;
+    float cursorBlink = 0.f;
+
+    // RUNNING state: 40x25 “text” grid (C64 style cell grid)
+    static constexpr int COLS = 40;
+    static constexpr int ROWS = 25;
+    struct Cell { char d = 0; bool drawn = false; }; // d = 1 for "\\" , 2 for "/"
+    std::vector<Cell> grid;
+    int drawnCells = 0;  // how many cells have been drawn (for progressive reveal)
+    float runTime = 0.f; // time spent in RUNNING
+
+    // Visual params (approximate C64 colors)
+    SDL_Color borderCol = {  0,  0,130,255}; // dark blue border
+    SDL_Color backCol   = {128,200,255,255}; // light blue screen
+    SDL_Color textCol   = { 64, 64,160,255}; // darker blue text
+    SDL_Color whiteCol  = {240,240,255,255};
+
+    // Screen geometry (computed on start)
+    SDL_Rect outer;     // full “C64 monitor” rect
+    SDL_Rect inner;     // inner “screen” rect (where text/pattern goes)
+    int cellW = 0, cellH = 0;
+
+    // Control
+    bool started = false;
+    bool done    = false;
+
+    // Fireworks hook (tie into your existing system):
+    bool startedFireworks = false;
+
+} C64PN;
+
+static inline void c64pnFillRect(SDL_Renderer* r, const SDL_Rect& rc, SDL_Color c) {
+    SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
+    SDL_RenderFillRect(r, &rc);
+}
+static inline void c64pnDrawText(SDL_Renderer* r, TTF_Font* font, const char* s, SDL_Color col, int x, int y) {
+    // Uses your existing text pipeline if you have it; fallback minimal:
+    // If you already have renderText(renderer, font, text, SDL_Color), use that.
+    extern SDL_Texture* renderText(SDL_Renderer*, TTF_Font*, const std::string&, SDL_Color);
+    SDL_Texture* tex = renderText(r, font, s, col);
+    if (tex) {
+        int tw, th; SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+        SDL_Rect dst{ x, y, tw, th };
+        SDL_RenderCopy(r, tex, nullptr, &dst);
+        SDL_DestroyTexture(tex);
+    }
+}
+
+// Computes a centered 4:3 “C64 monitor” with a border and inner 320x200-ish space scaled.
+static void c64pnLayout(int W, int H) {
+    // Outer: maintain 4:3 inside the 16:9 screen, centered
+    int outW = (H * 4) / 3;
+    int outH = H;
+    if (outW > W) { outW = W; outH = (W * 3) / 4; }
+    C64PN.outer = { (W - outW)/2, (H - outH)/2, outW, outH };
+
+    // Inner: border thickness around a 4:3-ish inner (C64 had fat borders)
+    int border = outW / 20; // tweak
+    C64PN.inner = { C64PN.outer.x + border, C64PN.outer.y + border,
+                    C64PN.outer.w - 2*border, C64PN.outer.h - 2*border };
+
+    // Derive cell size for 40x25 grid
+    C64PN.cellW = C64PN.inner.w / C64PN.COLS;
+    C64PN.cellH = C64PN.inner.h / C64PN.ROWS;
+}
+
+static void c64pnResetGrid() {
+    C64PN.grid.assign(C64PN.COLS * C64PN.ROWS, {});
+    for (int i = 0; i < (int)C64PN.grid.size(); ++i) {
+        // emulate RND(1) -> pick "/" or "\\"
+        C64PN.grid[i].d = (rand() & 1) ? 1 : 2;
+        C64PN.grid[i].drawn = false;
+    }
+    C64PN.drawnCells = 0;
+}
+
+static void c64pnStart(int screenW, int screenH) {
+    C64PN.started = true;
+    C64PN.done = false;
+    C64PN.phase = C64PrintNew::DECOMPRESS;
+    C64PN.t = 0.f; C64PN.total = 0.f;
+    C64PN.typedLine.clear(); C64PN.typedCount = 0.f;
+    C64PN.cursorOn = true; C64PN.cursorBlink = 0.f;
+    c64pnLayout(screenW, screenH);
+    c64pnResetGrid();
+    C64PN.runTime = 0.f;
+    C64PN.startedFireworks = false;
+}
+
+static void c64pnUpdate(float dt) {
+    if (C64PN.done) return;
+    C64PN.t += dt; C64PN.total += dt;
+    C64PN.cursorBlink += dt;
+    if (C64PN.cursorBlink >= 0.5f) { C64PN.cursorBlink = 0.f; C64PN.cursorOn = !C64PN.cursorOn; }
+
+    switch (C64PN.phase) {
+        case C64PrintNew::DECOMPRESS:
+            if (C64PN.t >= C64PN.decompressDur) {
+                C64PN.phase = C64PrintNew::BOOTSCR; C64PN.t = 0.f;
+            }
+            break;
+
+        case C64PrintNew::BOOTSCR:
+            if (C64PN.t >= C64PN.bootscrDur) {
+                C64PN.phase = C64PrintNew::TYPING; C64PN.t = 0.f;
+            }
+            break;
+
+        case C64PrintNew::TYPING: {
+            // type characters at typingSpeed
+            C64PN.typedCount += C64PN.typingSpeed * dt;
+            int want = (int)C64PN.typedCount;
+            if (want > (int)C64PN.toType.size()) want = (int)C64PN.toType.size();
+            C64PN.typedLine = C64PN.toType.substr(0, want);
+
+            if ((int)C64PN.typedLine.size() == (int)C64PN.toType.size()) {
+                // brief pause, then pretend user hits ENTER and RUN
+                if (C64PN.t > 0.25f) {
+                    C64PN.phase = C64PrintNew::RUNNING; C64PN.t = 0.f;
+                    c64pnResetGrid();
+                }
+            }
+        } break;
+
+        case C64PrintNew::RUNNING: {
+            C64PN.runTime += dt;
+            // reveal cells progressively
+            float step = C64PN.runDrawSpeed * dt;
+            int add = (int)step;
+            for (int i = 0; i < add && C64PN.drawnCells < (int)C64PN.grid.size(); ++i) {
+                C64PN.grid[C64PN.drawnCells++].drawn = true;
+            }
+            // after min hold, go fireworks
+            if (C64PN.runTime >= C64PN.runHoldMin) {
+                C64PN.phase = C64PrintNew::FIREWORKS; C64PN.t = 0.f;
+            }
+        } break;
+
+        case C64PrintNew::FIREWORKS: {
+            // kick off your existing fireworks system once
+            if (!C64PN.startedFireworks) {
+                C64PN.startedFireworks = true;
+                // If you already have an "exitExplosion" flag / reset, toggle it here
+            }
+            if (C64PN.t >= C64PN.fireworksDur) {
+                C64PN.phase = C64PrintNew::DONE; C64PN.t = 0.f; C64PN.done = true;
+            }
+        } break;
+
+        case C64PrintNew::DONE:
+        default: break;
+    }
+}
+
+static void c64pnDrawRasterBars(SDL_Renderer* r, const SDL_Rect& zone, float t) {
+    // Simple moving horizontal bars to sell the “decompression” vibe
+    int barH = 8;
+    for (int y = 0; y < zone.h; y += barH) {
+        float phase = fmodf((y * 0.04f + t * 6.0f), 6.28318f);
+        Uint8 v = (Uint8)(120 + 100 * (0.5f + 0.5f * sinf(phase)));
+        SDL_SetRenderDrawColor(r, v/3, v, 255, 255);
+        SDL_Rect b{ zone.x, zone.y + y, zone.w, barH-1 };
+        SDL_RenderFillRect(r, &b);
+    }
+}
+
+static void c64pnDrawBootText(SDL_Renderer* r, TTF_Font* font) {
+    const char* l1 = "*** COMMODORE 64 BASIC V2 ***";
+    const char* l2 = "64K RAM SYSTEM  38911 BASIC BYTES FREE";
+    const char* l3 = "READY.";
+
+    int x = C64PN.inner.x + C64PN.cellW; // indent a bit
+    int y = C64PN.inner.y + C64PN.cellH; // top padding
+    c64pnDrawText(r, font, l1, C64PN.textCol, x, y);
+    y += C64PN.cellH * 2;
+    c64pnDrawText(r, font, l2, C64PN.textCol, x, y);
+    y += C64PN.cellH * 2;
+    c64pnDrawText(r, font, l3, C64PN.textCol, x, y);
+
+    // blinking cursor after READY.
+    if (C64PN.cursorOn) {
+        SDL_Rect cur{ x + 6 * C64PN.cellW, y + C64PN.cellH/2, C64PN.cellW/2, C64PN.cellH/6 };
+        c64pnFillRect(r, cur, C64PN.textCol);
+    }
+}
+
+static void c64pnDrawTyping(SDL_Renderer* r, TTF_Font* font) {
+    c64pnDrawBootText(r, font);
+    int x = C64PN.inner.x + C64PN.cellW;
+    int y = C64PN.inner.y + C64PN.cellH * 7;
+    std::string line = C64PN.typedLine;
+    c64pnDrawText(r, font, line.c_str(), C64PN.textCol, x, y);
+    if (C64PN.cursorOn) {
+        int approxW = (int)line.size() * (C64PN.cellW * 0.6f);
+        SDL_Rect cur{ x + approxW + 2, y + C64PN.cellH/2, C64PN.cellW/2, C64PN.cellH/6 };
+        c64pnFillRect(r, cur, C64PN.textCol);
+    }
+}
+
+static void c64pnDrawPattern(SDL_Renderer* r) {
+    c64pnFillRect(r, C64PN.inner, C64PN.backCol);
+
+    SDL_SetRenderDrawColor(r, C64PN.textCol.r, C64PN.textCol.g, C64PN.textCol.b, 255);
+    for (int row = 0; row < C64PN.ROWS; ++row) {
+        for (int col = 0; col < C64PN.COLS; ++col) {
+            const int idx = row * C64PN.COLS + col;
+            const auto& cell = C64PN.grid[idx];
+            if (!cell.drawn) continue;
+
+            int x0 = C64PN.inner.x + col * C64PN.cellW;
+            int y0 = C64PN.inner.y + row * C64PN.cellH;
+            int x1 = x0 + C64PN.cellW - 1;
+            int y1 = y0 + C64PN.cellH - 1;
+
+            if (cell.d == 1) {
+                SDL_RenderDrawLine(r, x0, y0, x1, y1); // "\\"
+            } else {
+                SDL_RenderDrawLine(r, x0, y1, x1, y0); // "/"
+            }
+        }
+    }
+}
+
+static void renderC64PRINT_NEW(SDL_Renderer* renderer, TTF_Font* font, float dt, int screenW, int screenH) {
+    if (!C64PN.started) c64pnStart(screenW, screenH);
+    c64pnUpdate(dt);
+
+    c64pnFillRect(renderer, C64PN.outer, C64PN.borderCol);
+
+    switch (C64PN.phase) {
+        case C64PrintNew::DECOMPRESS: {
+            c64pnFillRect(renderer, C64PN.inner, C64PN.backCol);
+            c64pnDrawRasterBars(renderer, C64PN.inner, C64PN.total);
+            c64pnDrawText(renderer, font, "DECOMPRESSING... PLEASE WAIT", C64PN.textCol,
+                          C64PN.inner.x + C64PN.cellW, C64PN.inner.y + C64PN.inner.h - C64PN.cellH*2);
+        } break;
+
+        case C64PrintNew::BOOTSCR: {
+            c64pnFillRect(renderer, C64PN.inner, C64PN.backCol);
+            c64pnDrawBootText(renderer, font);
+        } break;
+
+        case C64PrintNew::TYPING: {
+            c64pnFillRect(renderer, C64PN.inner, C64PN.backCol);
+            c64pnDrawTyping(renderer, font);
+        } break;
+
+        case C64PrintNew::RUNNING: {
+            c64pnDrawPattern(renderer);
+        } break;
+
+        case C64PrintNew::FIREWORKS: {
+            c64pnDrawPattern(renderer);
+            extern void updateFireworks(float);
+            extern void renderFireworks(SDL_Renderer*);
+            updateFireworks(dt);
+            renderFireworks(renderer);
+        } break;
+
+        case C64PrintNew::DONE:
+        default: {
+        } break;
+    }
+}
+
+static bool c64PRINT_NEW_isDone() {
+    return C64PN.done;
 }
 
 // --- Plasma globals (måste finnas före användning) ---
@@ -605,7 +710,7 @@ enum PortfolioSubState : int {
     VIEW_INTERFERENCE,
     VIEW_SNAKE_GAME,
     VIEW_PONG_GAME,
-    VIEW_C64_10PRINT
+    VIEW_C64PRINT_NEW
 };
 
 
@@ -696,8 +801,7 @@ bool quitWasHovered = false;
 float backHoverAnim = 0.f;
 float nextHoverAnim = 0.f;
 float quitHoverAnim = 0.f;
-bool exitExplosion = false; 
-const char* c64;
+bool exitExplosion = false;
 float exitTimer = 0.1f;
 bool explosionReturnToMenu = false;
 bool explosionAdvanceEffect = false;
@@ -729,7 +833,7 @@ static inline bool intersectY(const SDL_Point& p0, const SDL_Point& p1, int y, f
 
 
 // C64 program struktur
-
+#if 0
 struct C64WindowState {
     // Grid
     int gridW = 42;                // typisk C64-breddkänsla, justera fritt
@@ -997,7 +1101,7 @@ const PortfolioSubState effectSequence[] = {
     VIEW_SNAKE_GAME,
     VIEW_PONG_GAME,
     VIEW_INTERFERENCE,
-    VIEW_C64_10PRINT,
+    VIEW_C64PRINT_NEW,
 };
 const float effectDurations[] = { 10.f, 10.f, 10.f, 10.f, 10.f, 10.f, 10.f };
 const int NUM_EFFECTS = sizeof(effectSequence) / sizeof(effectSequence[0]);
@@ -1061,9 +1165,8 @@ void startPortfolioEffect(PortfolioSubState st) {
         starPitch = 0.f;
         break;
 
-    case VIEW_C64_10PRINT:
-        initC64Window(SCREEN_WIDTH, SCREEN_HEIGHT);
-		starYaw = 0.f;
+    case VIEW_C64PRINT_NEW:
+        starYaw = 0.f;
         break;
 
     default:
@@ -3065,21 +3168,9 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
         break;
 
 
-    case VIEW_C64_10PRINT: {
-        static bool c64Started = false;
-        if (!c64Started) {
-            ensureGLContextCurrent();
-            startC64Window();
-            c64Started = true;
-        }
-
-        ensureGLContextCurrent();
-        updateC64Window(deltaTime);
-        renderC64Window(SCREEN_WIDTH, SCREEN_HEIGHT);
-        usedGL = true;
-
-        if (c64WindowIsDone()) {
-            c64Started = false;
+    case VIEW_C64PRINT_NEW: {
+        renderC64PRINT_NEW(ren, menuFont ? menuFont : titleFont, deltaTime, SCREEN_WIDTH, SCREEN_HEIGHT);
+        if (c64PRINT_NEW_isDone()) {
             int idx = (currentEffectIndex + 1) % NUM_EFFECTS;
             startStarTransition(idx);
         }
@@ -3380,7 +3471,7 @@ void renderC64Window(int screenW, int screenH) {
             drawLine(runStr.c_str(), 5);
         }
     }
-}
+#endif // old C64 implementation
 
 
 int main(int argc, char* argv[]) {
@@ -3471,9 +3562,6 @@ int main(int argc, char* argv[]) {
     glClearColor(0.f, 0.f, 0.f, 1.f);
 
     glEnable(GL_MULTISAMPLE);
-
-    // === C64 10 PRINT === init (GL är redo, SCREEN_* satta)
-    initC64Window(SCREEN_WIDTH, SCREEN_HEIGHT);
 
     IMG_Init(IMG_INIT_PNG);
     logoTexture = IMG_LoadTexture(renderer, "logo.png");
@@ -3711,11 +3799,11 @@ int main(int argc, char* argv[]) {
             if (!starTransition) {
                 renderPortfolioEffect(renderer, deltaTime);
                 usedGLThisFrame = (currentPortfolioSubState == VIEW_FRACTAL_ZOOM ||
-                                   currentPortfolioSubState == VIEW_C64_10PRINT ||
+                                   currentPortfolioSubState == VIEW_C64PRINT_NEW ||
                                    currentPortfolioSubState == VIEW_WIREFRAME_CUBE);
             }
 
-            if (currentPortfolioSubState != VIEW_C64_10PRINT) {
+            if (currentPortfolioSubState != VIEW_C64PRINT_NEW) {
                 SDL_Point mp{ mouseX, mouseY };
                 bool hovBack = SDL_PointInRect(&mp, &backButtonRect);
                 bool hovNext = SDL_PointInRect(&mp, &nextButtonRect);
