@@ -21,10 +21,11 @@ void main(){
         z = vec2(z.x*z.x - z.y*z.y, 2.0*z.x*z.y) + c;
     }
     if(i==uMaxIter){
-        gl_FragColor = vec4(0.0,0.0,0.0,1.0);
+        gl_FragColor = vec4(1.0,1.0,1.0,1.0);
     }else{
         float mu = float(i) - log2(log2(dot(z,z))) + 1.0;
         float t = mu / float(uMaxIter);
-        gl_FragColor = vec4(palette(t),1.0);
+        vec3 col = palette(t);
+        gl_FragColor = vec4(vec3(1.0) - col,1.0);
     }
 }

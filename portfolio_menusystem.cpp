@@ -93,9 +93,9 @@ void glDrawSDLTextureOverlay(SDL_Texture* tex, int x, int y, int w, int h, int s
 
 // --- C64 shaders (globala strängar) ---
 static const char* c64_vs = R"GLSL(
-#version 330 core
-layout (location=0) in vec2 aPos;
-out vec2 vUV;
+#version 120
+attribute vec2 aPos;
+varying vec2 vUV;
 void main(){
     vUV = aPos * 0.5 + 0.5;
     gl_Position = vec4(aPos, 0.0, 1.0);
@@ -105,9 +105,8 @@ void main(){
 // === C64 10 PRINT — vertex shader (panel + bg i en pass) ===
 static const char* c64_fs = R"GLSL(
 // C64 10 PRINT — fragment shader (panel + decrunch bg + gated reveal)
-#version 330 core
-in vec2 vUV;
-out vec4 FragColor;
+#version 120
+varying vec2 vUV;
 
 uniform sampler2D uRand;        // GL_R8, size == uGrid
 uniform ivec2  uGrid;           // gridW, gridH
@@ -173,9 +172,9 @@ void main(){
     // Utanför panelen: kör decrunch tills klar, SEN transparent så SDL kan synas
     if (!inPanel) {
         if (uDecomp < 1.0) {
-            FragColor = vec4(decrunchBG(uv, uTime, uDecomp), 1.0);
+            gl_FragColor = vec4(decrunchBG(uv, uTime, uDecomp), 1.0);
         } else {
-            FragColor = vec4(0.0); // transparent
+            gl_FragColor = vec4(0.0); // transparent
         }
         return;
     }
@@ -191,7 +190,7 @@ void main(){
 
     // Under decrunch: visa bara panelfärg (ingen reveal ännu)
     if (uDecomp < 1.0) {
-        FragColor = vec4(panelCol, 1.0);
+        gl_FragColor = vec4(panelCol, 1.0);
         return;
     }
 
@@ -200,12 +199,12 @@ void main(){
     vec2  g     = vec2(grid);
     vec2  cellf = floor(puv * g);
 
-    int colIdx      = clamp(int(cellf.x), 0, grid.x - 1);              // 0..W-1, vänster->höger
-    int rowFromTop  = clamp(grid.y - 1 - int(cellf.y), 0, grid.y - 1); // topp->botten
+    int colIdx      = clamp(int(cellf.x), 0, grid.x - 1);
+    int rowFromTop  = clamp(grid.y - 1 - int(cellf.y), 0, grid.y - 1);
     int idx         = rowFromTop * grid.x + colIdx;
 
     if (idx >= uRevealCount) {
-        FragColor = vec4(panelCol, 1.0);
+        gl_FragColor = vec4(panelCol, 1.0);
         return;
     }
 
@@ -214,7 +213,8 @@ void main(){
     vec2  f    = fract(puv * g);
 
     // '/' eller '\'
-    float pick = texelFetch(uRand, cell, 0).r;
+    vec2 randUV = (vec2(cell) + 0.5) / g;
+    float pick = texture2D(uRand, randUV).r;
 
     // Lite fetare C64-slash (justeras med uThickness)
     float d = (pick < 0.5)
@@ -229,7 +229,7 @@ void main(){
 
     // Slutfärg
     vec3 finalCol = mix(panelCol, uInk, lineMask) * scan;
-    FragColor = vec4(clamp(finalCol, 0.0, 1.0), 1.0);
+    gl_FragColor = vec4(clamp(finalCol, 0.0, 1.0), 1.0);
 }
 )GLSL";
 
@@ -2386,14 +2386,18 @@ void renderFractalZoom(SDL_Renderer* ren, float dt)
     static const Target targets[] = {
         { -0.743643887037151, 0.131825904205330 },
         { -0.743643700000000, 0.131825910000000 },
-        { -0.743643530000000, 0.131825880000000 }
+        { -0.743643530000000, 0.131825880000000 },
+        { -0.743643505000000, 0.131825862000000 },
+        { -0.743643502000000, 0.131825858000000 },
+        { -0.743643501250000, 0.131825856500000 }
     };
     constexpr int numTargets = int(sizeof(targets) / sizeof(targets[0]));
 
-    const float  flyTime = 1.2f;
+    // Slightly quicker zoom with a deeper dive into the set
+    const float  flyTime = 0.9f;
     const float  holdTime = 0.3f;
-    const double zoomFactorPerFly = 0.35;
-    const double minZoom = 8e-6;
+    const double zoomFactorPerFly = 0.22;  // zoom more each step
+    const double minZoom = 1e-7;           // allow deeper zoom
 
     enum Phase { Fly, Hold };
     static bool   firstRun = true;
@@ -2422,7 +2426,8 @@ void renderFractalZoom(SDL_Renderer* ren, float dt)
         zoom = startZoom;
     }
 
-    phaseTime += (phase == Fly ? dt * 2.5f : dt);
+    // Moderate speed multiplier for the fly phase
+    phaseTime += (phase == Fly ? dt * 1.3f : dt);
 
     auto ease = [](float t) {
         if (t < 0.f) t = 0.f; else if (t > 1.f) t = 1.f;
@@ -2511,8 +2516,10 @@ void renderFractalZoom(SDL_Renderer* ren, float dt)
 void updateInterference(float dt)
 {
     // jämna faser som loopar snyggt (wrap är kontinuerlig pga cos/sin)
-    interPhaseA = fmodf(interPhaseA + dt * 0.35f, 1.f * PI);
-    interPhaseB = fmodf(interPhaseB + dt * 0.23f, 1.f * PI);
+    // Use a full 2π wrap so the trigonometric functions loop smoothly
+    // without the visible jump that occurred when the phase wrapped at π.
+    interPhaseA = fmodf(interPhaseA + dt * 0.35f, 2.f * PI);
+    interPhaseB = fmodf(interPhaseB + dt * 0.23f, 2.f * PI);
 
     const float cx = SCREEN_WIDTH * 0.5f;
     const float cy = SCREEN_HEIGHT * 0.5f;
@@ -3183,6 +3190,20 @@ static bool C64DecompPhase = true;      // visa decrunch först
 static bool C64Done = false;
 static bool C64Boot = false;
 static float C64BootT = 0.f;
+static float C64HoldT = 0.f;                     // time to hold pattern after reveal
+
+// Text lines and timing for the boot sequence
+static constexpr char C64CodeLine[] = "10 PRINT CHR$(205.5+RND(1));:GOTO 10";
+static constexpr char C64RunLine[]  = "RUN";
+static constexpr float C64TypeSpeed = 20.f;  // chars per second
+static constexpr float C64BootDelay = 0.5f;  // wait before typing starts
+static constexpr float C64RunDelay  = 0.3f;  // pause before RUN
+static constexpr float C64AfterRunDelay = 0.5f; // pause after RUN before pattern
+static constexpr float C64BootDuration =
+    C64BootDelay + (sizeof(C64CodeLine)-1)/C64TypeSpeed +
+    C64RunDelay  + (sizeof(C64RunLine)-1)/C64TypeSpeed +
+    C64AfterRunDelay;
+static constexpr float C64HoldDuration = 3.0f;   // show finished pattern
 
 // Create GL_R8 random texture of size w x h
 static GLuint makeRandTex(int w, int h) {
@@ -3232,6 +3253,7 @@ void startC64Window() { // resetta för nästa visning om du vill
     C64Done = false;
     C64Boot = false;
     C64BootT = 0.f;
+    C64HoldT = 0.f;
 }
 
 void updateC64Window(float dt) {
@@ -3239,7 +3261,7 @@ void updateC64Window(float dt) {
 
     if (C64DecompPhase) {
 
-        const float decompDur = 2.5f;
+        const float decompDur = 2.0f;  // a couple of seconds of decrunch
         C64Decomp = std::min(1.f, C64Time / decompDur);
         if (C64Decomp >= 1.f) {
             C64DecompPhase = false;
@@ -3249,15 +3271,18 @@ void updateC64Window(float dt) {
         }
     } else if (C64Boot) {
         C64BootT += dt;
-        if (C64BootT > 2.0f) {
+        if (C64BootT > C64BootDuration) {
             C64Boot = false;
         }
     } else {
         int total = C64GridW * C64GridH;
-        int add = int(2200.f * dt); // 2200 celler/s
+        int add = int(1200.f * dt); // draw the pattern at a readable pace
         C64Reveal = std::min(total, C64Reveal + add);
         if (C64Reveal == total) {
-            C64Done = true; // mönstret är klart, men vi låter det ligga kvar
+            C64HoldT += dt;
+            if (C64HoldT >= C64HoldDuration) {
+                C64Done = true; // pattern shown long enough
+            }
         }
     }
 }
@@ -3310,16 +3335,31 @@ void renderC64Window(int screenW, int screenH) {
         auto drawLine = [&](const char* s, int line) {
             if (SDL_Texture* t = renderText(renderer, f, s, col)) {
                 int tw, th; SDL_QueryTexture(t, nullptr, nullptr, &tw, &th);
-                SDL_Rect dst{ x + 20, y + 20 + line * (th + 4), tw, th };
-                SDL_RenderCopy(renderer, t, nullptr, &dst);
+                int dx = x + 20;
+                int dy = y + 20 + line * (th + 4);
+                glDrawSDLTextureOverlay(t, dx, dy, tw, th, screenW, screenH);
                 SDL_DestroyTexture(t);
             }
         };
+
+        float t = C64BootT;
         drawLine("**** COMMODORE 64 BASIC V2 ****", 0);
         drawLine("64K RAM SYSTEM  38911 BASIC BYTES FREE", 1);
         drawLine("READY.", 2);
-        drawLine("10 PRINT CHR$(205.5+RND(1));:GOTO 10", 4);
-        drawLine("RUN", 5);
+
+        if (t > C64BootDelay) {
+            int maxChars = (int)(sizeof(C64CodeLine) - 1);
+            int chars = std::min<int>((t - C64BootDelay) * C64TypeSpeed, maxChars);
+            std::string code(C64CodeLine, chars);
+            drawLine(code.c_str(), 4);
+        }
+        float startRun = C64BootDelay + (sizeof(C64CodeLine)-1)/C64TypeSpeed + C64RunDelay;
+        if (t > startRun) {
+            int maxChars = (int)(sizeof(C64RunLine) - 1);
+            int chars = std::min<int>((t - startRun) * C64TypeSpeed, maxChars);
+            std::string runStr(C64RunLine, chars);
+            drawLine(runStr.c_str(), 5);
+        }
     }
 }
 
@@ -3590,7 +3630,6 @@ int main(int argc, char* argv[]) {
             renderStars(renderer, smallStars, { 180,180,255,220 });
             renderStars(renderer, bigStars, { 255,255,255,255 });
             renderStaticStars(renderer);
-            renderAboutC64Typewriter(renderer, deltaTime);
 
             renderMenu(deltaTime, mouseX, mouseY, mouseClick);
 
@@ -3610,6 +3649,7 @@ int main(int argc, char* argv[]) {
             renderStars(renderer, smallStars, { 180,180,255,220 });
             renderStars(renderer, bigStars, { 255,255,255,255 });
             renderStaticStars(renderer);
+            renderAboutC64Typewriter(renderer, deltaTime);
 
             SDL_Point mp{ mouseX, mouseY };
             bool hov = SDL_PointInRect(&mp, &backButtonRect);
