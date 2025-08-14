@@ -93,9 +93,9 @@ void glDrawSDLTextureOverlay(SDL_Texture* tex, int x, int y, int w, int h, int s
 
 // --- C64 shaders (globala strängar) ---
 static const char* c64_vs = R"GLSL(
-#version 330 core
-layout (location=0) in vec2 aPos;
-out vec2 vUV;
+#version 120
+attribute vec2 aPos;
+varying vec2 vUV;
 void main(){
     vUV = aPos * 0.5 + 0.5;
     gl_Position = vec4(aPos, 0.0, 1.0);
@@ -105,9 +105,8 @@ void main(){
 // === C64 10 PRINT — vertex shader (panel + bg i en pass) ===
 static const char* c64_fs = R"GLSL(
 // C64 10 PRINT — fragment shader (panel + decrunch bg + gated reveal)
-#version 330 core
-in vec2 vUV;
-out vec4 FragColor;
+#version 120
+varying vec2 vUV;
 
 uniform sampler2D uRand;        // GL_R8, size == uGrid
 uniform ivec2  uGrid;           // gridW, gridH
@@ -173,9 +172,9 @@ void main(){
     // Utanför panelen: kör decrunch tills klar, SEN transparent så SDL kan synas
     if (!inPanel) {
         if (uDecomp < 1.0) {
-            FragColor = vec4(decrunchBG(uv, uTime, uDecomp), 1.0);
+            gl_FragColor = vec4(decrunchBG(uv, uTime, uDecomp), 1.0);
         } else {
-            FragColor = vec4(0.0); // transparent
+            gl_FragColor = vec4(0.0); // transparent
         }
         return;
     }
@@ -191,7 +190,7 @@ void main(){
 
     // Under decrunch: visa bara panelfärg (ingen reveal ännu)
     if (uDecomp < 1.0) {
-        FragColor = vec4(panelCol, 1.0);
+        gl_FragColor = vec4(panelCol, 1.0);
         return;
     }
 
@@ -200,12 +199,12 @@ void main(){
     vec2  g     = vec2(grid);
     vec2  cellf = floor(puv * g);
 
-    int colIdx      = clamp(int(cellf.x), 0, grid.x - 1);              // 0..W-1, vänster->höger
-    int rowFromTop  = clamp(grid.y - 1 - int(cellf.y), 0, grid.y - 1); // topp->botten
+    int colIdx      = clamp(int(cellf.x), 0, grid.x - 1);
+    int rowFromTop  = clamp(grid.y - 1 - int(cellf.y), 0, grid.y - 1);
     int idx         = rowFromTop * grid.x + colIdx;
 
     if (idx >= uRevealCount) {
-        FragColor = vec4(panelCol, 1.0);
+        gl_FragColor = vec4(panelCol, 1.0);
         return;
     }
 
@@ -214,7 +213,8 @@ void main(){
     vec2  f    = fract(puv * g);
 
     // '/' eller '\'
-    float pick = texelFetch(uRand, cell, 0).r;
+    vec2 randUV = (vec2(cell) + 0.5) / g;
+    float pick = texture2D(uRand, randUV).r;
 
     // Lite fetare C64-slash (justeras med uThickness)
     float d = (pick < 0.5)
@@ -229,7 +229,7 @@ void main(){
 
     // Slutfärg
     vec3 finalCol = mix(panelCol, uInk, lineMask) * scan;
-    FragColor = vec4(clamp(finalCol, 0.0, 1.0), 1.0);
+    gl_FragColor = vec4(clamp(finalCol, 0.0, 1.0), 1.0);
 }
 )GLSL";
 
@@ -2386,16 +2386,19 @@ void renderFractalZoom(SDL_Renderer* ren, float dt)
     static const Target targets[] = {
         { -0.743643887037151, 0.131825904205330 },
         { -0.743643700000000, 0.131825910000000 },
-        { -0.743643530000000, 0.131825880000000 }
+        { -0.743643530000000, 0.131825880000000 },
+        { -0.743643505000000, 0.131825862000000 },
+        { -0.743643502000000, 0.131825858000000 },
+        { -0.743643501250000, 0.131825856500000 }
     };
     constexpr int numTargets = int(sizeof(targets) / sizeof(targets[0]));
 
-    // Slow down the zooming and linger a bit longer on each target so
-    // the fractal "arms" have time to unfold nicely.
-    const float  flyTime = 3.0f;          // was 1.2f – slower travel between targets
-    const float  holdTime = 1.0f;         // was 0.3f – short pause at each stop
-    const double zoomFactorPerFly = 0.5;  // gentler zoom progression
-    const double minZoom = 8e-6;
+    // Slightly quicker zoom with a deeper dive into the set
+    const float  flyTime = 0.9f;
+    const float  holdTime = 0.3f;
+    const double zoomFactorPerFly = 0.22;  // zoom more each step
+    const double minZoom = 1e-7;           // allow deeper zoom
+
 
     enum Phase { Fly, Hold };
     static bool   firstRun = true;
@@ -2424,9 +2427,10 @@ void renderFractalZoom(SDL_Renderer* ren, float dt)
         zoom = startZoom;
     }
 
-    // Previously the flight phase multiplied dt by 2.5 which made the
-    // animation race.  Using a smaller multiplier gives a calmer motion.
-    phaseTime += (phase == Fly ? dt * 0.6f : dt);
+
+    // Moderate speed multiplier for the fly phase
+    phaseTime += (phase == Fly ? dt * 1.3f : dt);
+
 
     auto ease = [](float t) {
         if (t < 0.f) t = 0.f; else if (t > 1.f) t = 1.f;
@@ -3629,7 +3633,6 @@ int main(int argc, char* argv[]) {
             renderStars(renderer, smallStars, { 180,180,255,220 });
             renderStars(renderer, bigStars, { 255,255,255,255 });
             renderStaticStars(renderer);
-            renderAboutC64Typewriter(renderer, deltaTime);
 
             renderMenu(deltaTime, mouseX, mouseY, mouseClick);
 
@@ -3649,6 +3652,7 @@ int main(int argc, char* argv[]) {
             renderStars(renderer, smallStars, { 180,180,255,220 });
             renderStars(renderer, bigStars, { 255,255,255,255 });
             renderStaticStars(renderer);
+            renderAboutC64Typewriter(renderer, deltaTime);
 
             SDL_Point mp{ mouseX, mouseY };
             bool hov = SDL_PointInRect(&mp, &backButtonRect);
