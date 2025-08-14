@@ -1734,7 +1734,7 @@ static void drawCone(int segs) {
 static const int GRID_W = 20;
 static const int GRID_H = 20;
 static const int CELL = 20;
-static const int WORM_MAX_SCORE = 10.0f;
+static const int WORM_MAX_SCORE = 10;
 static int snakeDir = 0;
 static float snakeTimer = 0.f;
 static SDL_Point food{ 0,0 };
@@ -1938,7 +1938,7 @@ static std::vector<FireworkParticle> pongFireworks; // local fireworks just for 
 // Layout & tuning
 static const int   PONG_PADDLE_INSET = 14;      // distance from frame edge
 static const Uint8 PONG_BG_ALPHA = 110;     // transparency of the black box (0..255)
-static const int   WIN_SCORE = 15.0f;      // win threshold
+static const int   WIN_SCORE = 15;      // win threshold
 
 // Speeds (slightly slower overall; AI a bit faster than player)
 static const float PONG_PLAYER_SPEED = 420.f;
@@ -2000,7 +2000,7 @@ static void pongRenderFireworks(SDL_Renderer* ren, const SDL_Rect& frame) {
 static void pongServeBall(const SDL_Rect& frame, int dirX) {
     ballX = frame.x + frame.w / 2.f;
     ballY = frame.y + frame.h / 2.f;
-    float vyRand = ((rand() % 200) - 100); // -100..+100
+    float vyRand = static_cast<float>((rand() % 200) - 100); // -100..+100
     ballVX = dirX * BALL_START_VX;
     ballVY = BALL_START_VY * (vyRand / 100.f);
     if (ballVY == 0.f) ballVY = 80.f; // avoid perfectly horizontal serves
@@ -3258,10 +3258,12 @@ void updateC64Window(float dt) {
         C64Reveal = std::min(total, C64Reveal + add);
         if (C64Reveal == total) {
             C64Done = true;
+
         int add = int(2200.f * dt); // 2200 celler/s
         C64Reveal = std::min(total, C64Reveal + add);
         if (C64Reveal == total) {
             C64Done = true; // mönstret är klart, men vi låter det ligga kvar
+
         }
     }
 }
@@ -3651,10 +3653,12 @@ int main(int argc, char* argv[]) {
             if (!starTransition) {
 
                 usedGLThisFrame = renderPortfolioEffect(renderer, deltaTime);
+                usedGLThisFrame = renderPortfolioEffect(renderer, deltaTime);
 
                 if (currentPortfolioSubState != VIEW_C64_10PRINT) {
                     renderPortfolioEffect(renderer, deltaTime);
                 }
+
             }
 
             if (currentPortfolioSubState != VIEW_C64_10PRINT) {
@@ -3665,6 +3669,15 @@ int main(int argc, char* argv[]) {
                 if (hovBack && !backWasHovered && hoverSound) {
                     Mix_PlayChannel(-1, hoverSound, 0);
                     backWasHovered = true;
+
+                }
+                else if (!hovBack) {
+                    backWasHovered = false;
+                }
+                if (hovNext && !nextWasHovered && hoverSound) {
+                    Mix_PlayChannel(-1, hoverSound, 0);
+                    nextWasHovered = true;
+
                 }
 
                 else if (!hovBack) {
@@ -3751,7 +3764,6 @@ int main(int argc, char* argv[]) {
                 if (currentPortfolioSubState == VIEW_C64_10PRINT) {
                     // NEXT i C64-vyn triggar bara flyganimationen i rutan
                     c64RequestFly();
-
                 }
                 else if (!hovNext) {
                     nextWasHovered = false;
