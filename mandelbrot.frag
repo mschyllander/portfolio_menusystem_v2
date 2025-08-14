@@ -21,7 +21,7 @@ void main(){
         z = vec2(z.x*z.x - z.y*z.y, 2.0*z.x*z.y) + c;
     }
     if(i==uMaxIter){
-        gl_FragColor = vec4(1.0,1.0,1.0,1.0);
+        gl_FragColor = vec4(0.0,0.0,0.0,1.0); // interior black
     }else{
         float mu = float(i) - log2(log2(dot(z,z))) + 1.0;
         float t = mu / float(uMaxIter);

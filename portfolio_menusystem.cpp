@@ -199,8 +199,8 @@ void main(){
     vec2  g     = vec2(grid);
     vec2  cellf = floor(puv * g);
 
-    int colIdx      = clamp(int(cellf.x), 0, grid.x - 1);
-    int rowFromTop  = clamp(grid.y - 1 - int(cellf.y), 0, grid.y - 1);
+    int colIdx      = int(clamp(cellf.x, 0.0, float(grid.x - 1)));
+    int rowFromTop  = int(clamp(float(grid.y - 1) - cellf.y, 0.0, float(grid.y - 1)));
     int idx         = rowFromTop * grid.x + colIdx;
 
     if (idx >= uRevealCount) {
@@ -209,7 +209,7 @@ void main(){
     }
 
     // Lokala cell-coords
-    ivec2 cell = ivec2(colIdx, clamp(int(cellf.y), 0, grid.y - 1));
+    ivec2 cell = ivec2(colIdx, int(clamp(cellf.y, 0.0, float(grid.y - 1))));
     vec2  f    = fract(puv * g);
 
     // '/' eller '\'
@@ -515,8 +515,8 @@ void initFractalZoom() {
 const int SCREEN_WIDTH = 1920;
 const int SCREEN_HEIGHT = 1080;
 
-const int NUM_SMALL_STARS = 100;   // fewer stars for lighter tunnel
-const int NUM_BIG_STARS = 50;     // adjust big stars accordingly
+const int NUM_SMALL_STARS = 160;   // more stars for better coverage
+const int NUM_BIG_STARS = 80;     // adjust big stars accordingly
 const int NUM_STATIC_STARS = 120;
 const int PONG_MARGIN = 400;
 const int PONG_VMARGIN = 150;
@@ -657,6 +657,7 @@ static const SDL_Color kCRTTint        = {30, 80, 30, 255};
 
 bool renderPortfolioEffect(SDL_Renderer*, float deltaTime);
 void renderAboutC64Typewriter(SDL_Renderer* ren, float dt);
+void resetAboutC64Typewriter();
 
 SDL_Renderer* renderer = nullptr;
 SDL_Texture* logoTexture = nullptr;
@@ -2393,11 +2394,11 @@ void renderFractalZoom(SDL_Renderer* ren, float dt)
     };
     constexpr int numTargets = int(sizeof(targets) / sizeof(targets[0]));
 
-    // Slightly quicker zoom with a deeper dive into the set
-    const float  flyTime = 0.9f;
-    const float  holdTime = 0.3f;
-    const double zoomFactorPerFly = 0.22;  // zoom more each step
-    const double minZoom = 1e-7;           // allow deeper zoom
+    // Slower, smoother flight into the set
+    const float  flyTime = 2.4f;
+    const float  holdTime = 0.6f;
+    const double zoomFactorPerFly = 0.12;  // gentler zoom per step
+    const double minZoom = 1e-6;           // avoid excessive iterations
 
 
     enum Phase { Fly, Hold };
@@ -2428,8 +2429,8 @@ void renderFractalZoom(SDL_Renderer* ren, float dt)
     }
 
 
-    // Moderate speed multiplier for the fly phase
-    phaseTime += (phase == Fly ? dt * 1.3f : dt);
+    // Even pacing for fly and hold phases
+    phaseTime += dt;
 
 
     auto ease = [](float t) {
@@ -2499,7 +2500,7 @@ void renderFractalZoom(SDL_Renderer* ren, float dt)
     glUniform2f(glGetUniformLocation(mandelbrotShader, "uCenter"), (float)animX, (float)animY);
     glUniform2i(glGetUniformLocation(mandelbrotShader, "uResolution"), viewW, viewH);
 
-    int maxIter = 600;
+    int maxIter = 450; // lighter on the GPU
     glUniform1i(glGetUniformLocation(mandelbrotShader, "uMaxIter"), maxIter);
 
     glBindVertexArray(mandelbrotVAO);
@@ -2518,11 +2519,9 @@ void renderFractalZoom(SDL_Renderer* ren, float dt)
 
 void updateInterference(float dt)
 {
-    // jämna faser som loopar snyggt (wrap är kontinuerlig pga cos/sin)
-    // Use a full 2π wrap so the trigonometric functions loop smoothly
-    // without the visible jump that occurred when the phase wrapped at π.
-    interPhaseA = fmodf(interPhaseA + dt * 0.35f, 2.f * PI);
-    interPhaseB = fmodf(interPhaseB + dt * 0.23f, 2.f * PI);
+    // Smoothly wrap phases using the helper wrapf to avoid visible jumps
+    interPhaseA = wrapf(interPhaseA + dt * 0.35f, 2.f * PI);
+    interPhaseB = wrapf(interPhaseB + dt * 0.23f, 2.f * PI);
 
     const float cx = SCREEN_WIDTH * 0.5f;
     const float cy = SCREEN_HEIGHT * 0.5f;
@@ -2661,17 +2660,21 @@ void renderLogoWithReflection(SDL_Renderer* ren, SDL_Texture* logo, int baseX) {
     SDL_DestroyTexture(tgt);
 }
 
+static bool aboutInit = false;
+static std::string aboutFlat;
+static std::string aboutScript;
+static std::vector<float> aboutEvents;
+static float aboutStart = 0.f;
+
+void resetAboutC64Typewriter() {
+    aboutInit = false;
+}
+
 void renderAboutC64Typewriter(SDL_Renderer* ren, float dt) {
     SDL_RenderSetClipRect(ren, nullptr);
 
-    static bool init = false;
-    static std::string flat;           // slutlig text (korrekt)
-    static std::string script;         // med felskrivningar, backspace och upprepningar
-    static std::vector<float> tEvent;  // kumulativ tid per script-händelse
-    static float startTime = 0.f;
-
-    if (!init) {
-        init = true;
+    if (!aboutInit) {
+        aboutInit = true;
 
         // --- Bygg texten (i versaler) ---
         std::vector<std::string> lines = {
@@ -2699,15 +2702,15 @@ void renderAboutC64Typewriter(SDL_Renderer* ren, float dt) {
             if (i) oss << '\n';
             oss << lines[i];
         }
-        flat = oss.str();
+        aboutFlat = oss.str();
 
-        startTime = elapsedTime;
+        aboutStart = elapsedTime;
 
         // --- Generera 'script' med små fel/upprepningar + tid per händelse ---
-        script.clear();
-        tEvent.clear();
-        script.reserve(flat.size() * 2);
-        tEvent.reserve(flat.size() * 2);
+        aboutScript.clear();
+        aboutEvents.clear();
+        aboutScript.reserve(aboutFlat.size() * 2);
+        aboutEvents.reserve(aboutFlat.size() * 2);
 
         const float CPS = 14.f;                 // basfart (tecken/sek)
         const float base_dt = 1.f / CPS;
@@ -2723,30 +2726,30 @@ void renderAboutC64Typewriter(SDL_Renderer* ren, float dt) {
             return misc[rand() % (int)(sizeof(misc))];
             };
 
-        for (char ch : flat) {
+        for (char ch : aboutFlat) {
             const bool word = isWordChar(ch);
 
             // Liten chans till upprepning (stamning)
             if (word && (rand() % 100) < 3) {
-                script.push_back(ch);
+                aboutScript.push_back(ch);
                 tsum += base_dt;                 // normal tick
-                tEvent.push_back(tsum);
+                aboutEvents.push_back(tsum);
             }
 
             // Liten chans till felskrivning: fel tecken + kort paus + backspace
             if (word && (rand() % 100) < 4) {
                 char wrong = randomWrong();
-                script.push_back(wrong);
+                aboutScript.push_back(wrong);
                 tsum += base_dt * 0.8f;         // snabbt fel
-                tEvent.push_back(tsum);
+                aboutEvents.push_back(tsum);
 
                 tsum += base_dt * 0.4f;         // "oj"-paus
-                script.push_back('\b');         // backspace
-                tEvent.push_back(tsum);
+                aboutScript.push_back('\b');         // backspace
+                aboutEvents.push_back(tsum);
             }
 
             // Avsett tecken + ev. paus beroende på tecken
-            script.push_back(ch);
+            aboutScript.push_back(ch);
             float dtc = base_dt;
             if (ch == ' ')                      dtc += 0.02f;
             if (ch == ',' || ch == ';' || ch == ':') dtc += 0.10f;
@@ -2754,20 +2757,20 @@ void renderAboutC64Typewriter(SDL_Renderer* ren, float dt) {
             if (ch == '\n')                     dtc += 0.28f;
 
             tsum += dtc;
-            tEvent.push_back(tsum);
+            aboutEvents.push_back(tsum);
         }
     }
 
     // --- Hur många script-händelser ska visas just nu? ---
-    float tNow = elapsedTime - startTime;
-    size_t shown = (size_t)(std::upper_bound(tEvent.begin(), tEvent.end(), tNow) - tEvent.begin());
-    if (shown > script.size()) shown = script.size();
+    float tNow = elapsedTime - aboutStart;
+    size_t shown = (size_t)(std::upper_bound(aboutEvents.begin(), aboutEvents.end(), tNow) - aboutEvents.begin());
+    if (shown > aboutScript.size()) shown = aboutScript.size();
 
     // --- Bygg synliga rader genom att tolka \n och \b ---
     std::vector<std::string> outLines;
     outLines.emplace_back(); // minst en rad
     for (size_t i = 0; i < shown; ++i) {
-        char c = script[i];
+        char c = aboutScript[i];
         if (c == '\n') {
             outLines.emplace_back();
         }
@@ -3388,6 +3391,9 @@ int main(int argc, char* argv[]) {
         currentMusic = backgroundMusic;
     }
 
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
 
@@ -3529,6 +3535,7 @@ int main(int argc, char* argv[]) {
                     currentState = STATE_MENU;
                     portfolioMusicStarted = false;
                     startBackgroundMusic();
+                    resetAboutC64Typewriter();
                 }
                 else {
                     currentEffectIndex = targetEffectIndex;
@@ -3633,6 +3640,7 @@ int main(int argc, char* argv[]) {
             renderStars(renderer, smallStars, { 180,180,255,220 });
             renderStars(renderer, bigStars, { 255,255,255,255 });
             renderStaticStars(renderer);
+            renderAboutC64Typewriter(renderer, deltaTime);
 
             renderMenu(deltaTime, mouseX, mouseY, mouseClick);
 
@@ -3688,7 +3696,10 @@ int main(int argc, char* argv[]) {
             SDL_RenderFlush(renderer);
 
             if (!starTransition) {
-                usedGLThisFrame = renderPortfolioEffect(renderer, deltaTime);
+                renderPortfolioEffect(renderer, deltaTime);
+                usedGLThisFrame = (currentPortfolioSubState == VIEW_FRACTAL_ZOOM ||
+                                   currentPortfolioSubState == VIEW_C64_10PRINT ||
+                                   currentPortfolioSubState == VIEW_WIREFRAME_CUBE);
             }
 
             if (currentPortfolioSubState != VIEW_C64_10PRINT) {
