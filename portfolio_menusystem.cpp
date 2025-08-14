@@ -2390,9 +2390,11 @@ void renderFractalZoom(SDL_Renderer* ren, float dt)
     };
     constexpr int numTargets = int(sizeof(targets) / sizeof(targets[0]));
 
-    const float  flyTime = 1.2f;
-    const float  holdTime = 0.3f;
-    const double zoomFactorPerFly = 0.35;
+    // Slow down the zooming and linger a bit longer on each target so
+    // the fractal "arms" have time to unfold nicely.
+    const float  flyTime = 3.0f;          // was 1.2f – slower travel between targets
+    const float  holdTime = 1.0f;         // was 0.3f – short pause at each stop
+    const double zoomFactorPerFly = 0.5;  // gentler zoom progression
     const double minZoom = 8e-6;
 
     enum Phase { Fly, Hold };
@@ -2422,7 +2424,9 @@ void renderFractalZoom(SDL_Renderer* ren, float dt)
         zoom = startZoom;
     }
 
-    phaseTime += (phase == Fly ? dt * 2.5f : dt);
+    // Previously the flight phase multiplied dt by 2.5 which made the
+    // animation race.  Using a smaller multiplier gives a calmer motion.
+    phaseTime += (phase == Fly ? dt * 0.6f : dt);
 
     auto ease = [](float t) {
         if (t < 0.f) t = 0.f; else if (t > 1.f) t = 1.f;
@@ -2511,8 +2515,10 @@ void renderFractalZoom(SDL_Renderer* ren, float dt)
 void updateInterference(float dt)
 {
     // jämna faser som loopar snyggt (wrap är kontinuerlig pga cos/sin)
-    interPhaseA = fmodf(interPhaseA + dt * 0.35f, 1.f * PI);
-    interPhaseB = fmodf(interPhaseB + dt * 0.23f, 1.f * PI);
+    // Use a full 2π wrap so the trigonometric functions loop smoothly
+    // without the visible jump that occurred when the phase wrapped at π.
+    interPhaseA = fmodf(interPhaseA + dt * 0.35f, 2.f * PI);
+    interPhaseB = fmodf(interPhaseB + dt * 0.23f, 2.f * PI);
 
     const float cx = SCREEN_WIDTH * 0.5f;
     const float cy = SCREEN_HEIGHT * 0.5f;
@@ -3183,6 +3189,20 @@ static bool C64DecompPhase = true;      // visa decrunch först
 static bool C64Done = false;
 static bool C64Boot = false;
 static float C64BootT = 0.f;
+static float C64HoldT = 0.f;                     // time to hold pattern after reveal
+
+// Text lines and timing for the boot sequence
+static constexpr char C64CodeLine[] = "10 PRINT CHR$(205.5+RND(1));:GOTO 10";
+static constexpr char C64RunLine[]  = "RUN";
+static constexpr float C64TypeSpeed = 20.f;  // chars per second
+static constexpr float C64BootDelay = 0.5f;  // wait before typing starts
+static constexpr float C64RunDelay  = 0.3f;  // pause before RUN
+static constexpr float C64AfterRunDelay = 0.5f; // pause after RUN before pattern
+static constexpr float C64BootDuration =
+    C64BootDelay + (sizeof(C64CodeLine)-1)/C64TypeSpeed +
+    C64RunDelay  + (sizeof(C64RunLine)-1)/C64TypeSpeed +
+    C64AfterRunDelay;
+static constexpr float C64HoldDuration = 3.0f;   // show finished pattern
 
 // Create GL_R8 random texture of size w x h
 static GLuint makeRandTex(int w, int h) {
@@ -3232,6 +3252,7 @@ void startC64Window() { // resetta för nästa visning om du vill
     C64Done = false;
     C64Boot = false;
     C64BootT = 0.f;
+    C64HoldT = 0.f;
 }
 
 void updateC64Window(float dt) {
@@ -3239,7 +3260,7 @@ void updateC64Window(float dt) {
 
     if (C64DecompPhase) {
 
-        const float decompDur = 2.5f;
+        const float decompDur = 2.0f;  // a couple of seconds of decrunch
         C64Decomp = std::min(1.f, C64Time / decompDur);
         if (C64Decomp >= 1.f) {
             C64DecompPhase = false;
@@ -3249,15 +3270,18 @@ void updateC64Window(float dt) {
         }
     } else if (C64Boot) {
         C64BootT += dt;
-        if (C64BootT > 2.0f) {
+        if (C64BootT > C64BootDuration) {
             C64Boot = false;
         }
     } else {
         int total = C64GridW * C64GridH;
-        int add = int(2200.f * dt); // 2200 celler/s
+        int add = int(1200.f * dt); // draw the pattern at a readable pace
         C64Reveal = std::min(total, C64Reveal + add);
         if (C64Reveal == total) {
-            C64Done = true; // mönstret är klart, men vi låter det ligga kvar
+            C64HoldT += dt;
+            if (C64HoldT >= C64HoldDuration) {
+                C64Done = true; // pattern shown long enough
+            }
         }
     }
 }
@@ -3310,16 +3334,31 @@ void renderC64Window(int screenW, int screenH) {
         auto drawLine = [&](const char* s, int line) {
             if (SDL_Texture* t = renderText(renderer, f, s, col)) {
                 int tw, th; SDL_QueryTexture(t, nullptr, nullptr, &tw, &th);
-                SDL_Rect dst{ x + 20, y + 20 + line * (th + 4), tw, th };
-                SDL_RenderCopy(renderer, t, nullptr, &dst);
+                int dx = x + 20;
+                int dy = y + 20 + line * (th + 4);
+                glDrawSDLTextureOverlay(t, dx, dy, tw, th, screenW, screenH);
                 SDL_DestroyTexture(t);
             }
         };
+
+        float t = C64BootT;
         drawLine("**** COMMODORE 64 BASIC V2 ****", 0);
         drawLine("64K RAM SYSTEM  38911 BASIC BYTES FREE", 1);
         drawLine("READY.", 2);
-        drawLine("10 PRINT CHR$(205.5+RND(1));:GOTO 10", 4);
-        drawLine("RUN", 5);
+
+        if (t > C64BootDelay) {
+            int maxChars = (int)(sizeof(C64CodeLine) - 1);
+            int chars = std::min<int>((t - C64BootDelay) * C64TypeSpeed, maxChars);
+            std::string code(C64CodeLine, chars);
+            drawLine(code.c_str(), 4);
+        }
+        float startRun = C64BootDelay + (sizeof(C64CodeLine)-1)/C64TypeSpeed + C64RunDelay;
+        if (t > startRun) {
+            int maxChars = (int)(sizeof(C64RunLine) - 1);
+            int chars = std::min<int>((t - startRun) * C64TypeSpeed, maxChars);
+            std::string runStr(C64RunLine, chars);
+            drawLine(runStr.c_str(), 5);
+        }
     }
 }
 
