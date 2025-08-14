@@ -655,7 +655,7 @@ static const SDL_Color kMonoGreenBase  = {120, 220, 120, 255};
 static const SDL_Color kMonoGreenHover = {170, 255, 170, 255};
 static const SDL_Color kCRTTint        = {30, 80, 30, 255};
 
-void renderPortfolioEffect(SDL_Renderer*, float deltaTime);
+bool renderPortfolioEffect(SDL_Renderer*, float deltaTime);
 void renderAboutC64Typewriter(SDL_Renderer* ren, float dt);
 
 SDL_Renderer* renderer = nullptr;
@@ -2390,9 +2390,9 @@ void renderFractalZoom(SDL_Renderer* ren, float dt)
     };
     constexpr int numTargets = int(sizeof(targets) / sizeof(targets[0]));
 
-    const float  flyTime = 2.2f;
-    const float  holdTime = 0.6f;
-    const double zoomFactorPerFly = 0.18;
+    const float  flyTime = 1.2f;
+    const float  holdTime = 0.3f;
+    const double zoomFactorPerFly = 0.35;
     const double minZoom = 8e-6;
 
     enum Phase { Fly, Hold };
@@ -2422,7 +2422,7 @@ void renderFractalZoom(SDL_Renderer* ren, float dt)
         zoom = startZoom;
     }
 
-    phaseTime += (phase == Fly ? dt * 1.7f : dt);
+    phaseTime += (phase == Fly ? dt * 2.5f : dt);
 
     auto ease = [](float t) {
         if (t < 0.f) t = 0.f; else if (t > 1.f) t = 1.f;
@@ -2442,30 +2442,11 @@ void renderFractalZoom(SDL_Renderer* ren, float dt)
     {
         float t = ease(phaseTime / flyTime);
 
-        // Lerp
-        double cx = startX + (targetX - startX) * (double)t;
-        double cy = startY + (targetY - startY) * (double)t;
-
-        // [FIX] Geometrisk zoom först (behövs för clampen nedan)
+        // Lerp center and geometric zoom
+        centerX = startX + (targetX - startX) * (double)t;
+        centerY = startY + (targetY - startY) * (double)t;
         zoom = startZoom * pow(endZoom / startZoom, (double)t);
         if (zoom < minZoom) zoom = minZoom;
-
-        // [FIX] Komponent-vis clamp av pan relativt zoom & aspect:
-        // tillåten max-förskjutning i komplexplanet för att hålla motivet i ruta
-        const double k = 0.35;             // “hur stor del av halvbredd/halvhöjd” (0.25–0.5)
-        const double maxDx = aspect * zoom * k;  // x når kanten vid ±aspect*uZoom
-        const double maxDy = 1.0 * zoom * k;   // y når kanten vid ±1*uZoom
-
-        double dx = cx - startX;
-        double dy = cy - startY;
-
-        if (dx > maxDx) dx = maxDx;
-        if (dx < -maxDx) dx = -maxDx;
-        if (dy > maxDy) dy = maxDy;
-        if (dy < -maxDy) dy = -maxDy;
-
-        centerX = startX + dx;
-        centerY = startY + dy;
 
         if (t >= 1.f) { phase = Hold; phaseTime = 0.f; }
     }
@@ -2510,13 +2491,8 @@ void renderFractalZoom(SDL_Renderer* ren, float dt)
     glUniform2f(glGetUniformLocation(mandelbrotShader, "uCenter"), (float)animX, (float)animY);
     glUniform2i(glGetUniformLocation(mandelbrotShader, "uResolution"), viewW, viewH);
 
-    float depthFactor = (float)std::log10f((float)(startZoom / zoom) + 1.0f);
-    int   maxIter = std::min(7000, 4000 + int(12000.f * depthFactor));
+    int maxIter = 600;
     glUniform1i(glGetUniformLocation(mandelbrotShader, "uMaxIter"), maxIter);
-
-    glUniform1f(glGetUniformLocation(mandelbrotShader, "uBrightness"), 1.19f);
-    glUniform1f(glGetUniformLocation(mandelbrotShader, "uGamma"), 1.1f);
-    glUniform1f(glGetUniformLocation(mandelbrotShader, "uContrast"), 1.80f);
 
     glBindVertexArray(mandelbrotVAO);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -2878,7 +2854,8 @@ void startExitExplosion(bool returnToMenu, bool nextEffect, int nextIndex)
     explosionNextIndex = nextIndex;
 }
 
-void renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
+bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
+    bool usedGL = false;
 
     switch (currentPortfolioSubState) {
 
@@ -2903,7 +2880,7 @@ void renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
                 WF_FlyOut = false; WF_FlyT = 0.f;
                 currentEffectIndex = (currentEffectIndex + 1) % NUM_EFFECTS;
                 startPortfolioEffect(effectSequence[currentEffectIndex]);
-                return;
+                return usedGL;
             }
         }
 
@@ -3028,6 +3005,7 @@ void renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
 
     case VIEW_FRACTAL_ZOOM:
         renderFractalZoom(ren, deltaTime);
+        usedGL = true;
         break;
 
     case VIEW_SNAKE_GAME:
@@ -3040,13 +3018,31 @@ void renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
         renderPongGame(ren, deltaTime);
         break;
 
-    case VIEW_C64_10PRINT:
-		updateC64Window(deltaTime);
+    case VIEW_C64_10PRINT: {
+        static bool c64Started = false;
+        if (!c64Started) {
+            ensureGLContextCurrent();
+            startC64Window();
+            c64Started = true;
+        }
+
+        ensureGLContextCurrent();
+        updateC64Window(deltaTime);
         renderC64Window(SCREEN_WIDTH, SCREEN_HEIGHT);
-		break;
+        usedGL = true;
+
+        if (c64WindowIsDone()) {
+            c64Started = false;
+            int idx = (currentEffectIndex + 1) % NUM_EFFECTS;
+            startStarTransition(idx);
+        }
+        break;
+    }
 
     default: break;
     }
+
+    return usedGL;
 }
 
 
@@ -3184,6 +3180,8 @@ static float C64Time = 0.f;
 static float C64Decomp = 0.f;           // 0..1
 static bool C64DecompPhase = true;      // visa decrunch först
 static bool C64Done = false;
+static bool C64Boot = false;
+static float C64BootT = 0.f;
 
 // Create GL_R8 random texture of size w x h
 static GLuint makeRandTex(int w, int h) {
@@ -3231,34 +3229,33 @@ void startC64Window() { // resetta för nästa visning om du vill
     C64Decomp = 0.f;
     C64DecompPhase = true;
     C64Done = false;
+    C64Boot = false;
+    C64BootT = 0.f;
 }
 
 void updateC64Window(float dt) {
     C64Time += dt;
 
     if (C64DecompPhase) {
-        // kör "decrunch" ~2.5s
-        const float decompDur = 5.0f;
+        const float decompDur = 2.5f;
         C64Decomp = std::min(1.f, C64Time / decompDur);
         if (C64Decomp >= 1.f) {
             C64DecompPhase = false;
-            // starta reveal
+            C64Boot = true;
+            C64BootT = 0.f;
             C64Reveal = 0;
         }
-    }
-    else {
-        // reveal X cells per second
+    } else if (C64Boot) {
+        C64BootT += dt;
+        if (C64BootT > 2.0f) {
+            C64Boot = false;
+        }
+    } else {
         int total = C64GridW * C64GridH;
-        int add = int(2200.f * dt); // testa fart; 2200 celler/s
+        int add = int(2200.f * dt);
         C64Reveal = std::min(total, C64Reveal + add);
         if (C64Reveal == total) {
-            // håll uppe bilden en stund och markera klar
-            static float hold = 0.f;
-            hold += dt;
-            if (hold > 1.0f) {
-                C64Done = true;
-                hold = 0.f;
-            }
+            C64Done = true;
         }
     }
 }
@@ -3301,9 +3298,27 @@ void renderC64Window(int screenW, int screenH) {
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glBindVertexArray(0);
 
-    SDL_Rect menuRect{ 0,0,SCREEN_WIDTH,50 };
-    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 180);
-    SDL_RenderFillRect(renderer, &menuRect);
+    if (C64Boot) {
+        int w = int(panelW * screenW);
+        int h = int(panelH * screenH);
+        int x = (screenW - w) / 2;
+        int y = (screenH - h) / 2;
+        TTF_Font* f = consoleFont ? consoleFont : menuFont;
+        SDL_Color col{120,255,120,255};
+        auto drawLine = [&](const char* s, int line) {
+            if (SDL_Texture* t = renderText(renderer, f, s, col)) {
+                int tw, th; SDL_QueryTexture(t, nullptr, nullptr, &tw, &th);
+                SDL_Rect dst{ x + 20, y + 20 + line * (th + 4), tw, th };
+                SDL_RenderCopy(renderer, t, nullptr, &dst);
+                SDL_DestroyTexture(t);
+            }
+        };
+        drawLine("**** COMMODORE 64 BASIC V2 ****", 0);
+        drawLine("64K RAM SYSTEM  38911 BASIC BYTES FREE", 1);
+        drawLine("READY.", 2);
+        drawLine("10 PRINT CHR$(205.5+RND(1));:GOTO 10", 4);
+        drawLine("RUN", 5);
+    }
 }
 
 
@@ -3436,9 +3451,6 @@ int main(int argc, char* argv[]) {
     bool running = true;
     Uint32 lastTicks = SDL_GetTicks();
 
-    // === C64 10 PRINT === startflagga
-    static bool c64Started = false;
-
     while (running) {
         Uint32 cur = SDL_GetTicks();
         bool usedGLThisFrame = false;
@@ -3452,8 +3464,6 @@ int main(int argc, char* argv[]) {
         if (!starTransition) effectTimer += deltaTime;
 
         if (starTransition) {
-            c64Started = false;
-
             starTransitionTime += deltaTime;
             float t = starTransitionTime / starTransitionDuration;
             if (t > 1.f) t = 1.f;
@@ -3633,113 +3643,88 @@ int main(int argc, char* argv[]) {
             SDL_RenderFlush(renderer);
 
             if (!starTransition) {
-                renderPortfolioEffect(renderer, deltaTime);
+                usedGLThisFrame = renderPortfolioEffect(renderer, deltaTime);
             }
 
-            // === C64 10 PRINT ===
-            if (!starTransition && currentPortfolioSubState == VIEW_C64_10PRINT) {
-                // starta en gång
-                if (!c64Started) {
-                    ensureGLContextCurrent();
-                    startC64Window();
-                    c64Started = true;
+            if (currentPortfolioSubState != VIEW_C64_10PRINT) {
+                SDL_Point mp{ mouseX, mouseY };
+                bool hovBack = SDL_PointInRect(&mp, &backButtonRect);
+                bool hovNext = SDL_PointInRect(&mp, &nextButtonRect);
+                bool hovQuit = SDL_PointInRect(&mp, &quitButtonRect);
+                if (hovBack && !backWasHovered && hoverSound) {
+                    Mix_PlayChannel(-1, hoverSound, 0);
+                    backWasHovered = true;
+                }
+                else if (!hovBack) {
+                    backWasHovered = false;
+                }
+                if (hovNext && !nextWasHovered && hoverSound) {
+                    Mix_PlayChannel(-1, hoverSound, 0);
+                    nextWasHovered = true;
+                }
+                else if (!hovNext) {
+                    nextWasHovered = false;
+                }
+                if (hovQuit && !quitWasHovered && hoverSound) {
+                    Mix_PlayChannel(-1, hoverSound, 0);
+                    quitWasHovered = true;
+                }
+                else if (!hovQuit) {
+                    quitWasHovered = false;
                 }
 
-                // uppdatera + rendera
-                ensureGLContextCurrent();
-                updateC64Window(deltaTime);
-                renderC64Window(SCREEN_WIDTH, SCREEN_HEIGHT);
+                backHoverAnim += (hovBack ? 1.f : -1.f) * deltaTime * 6.f;
+                backHoverAnim = clampValue(backHoverAnim, 0.f, 1.f);
+                nextHoverAnim += (hovNext ? 1.f : -1.f) * deltaTime * 6.f;
+                nextHoverAnim = clampValue(nextHoverAnim, 0.f, 1.f);
+                quitHoverAnim += (hovQuit ? 1.f : -1.f) * deltaTime * 6.f;
+                quitHoverAnim = clampValue(quitHoverAnim, 0.f, 1.f);
 
-                // usedGLThisFrame = true;
+                SDL_Color bc = hovBack ? kMonoGreenHover : kMonoGreenBase;
+                SDL_Color sc = hovNext ? kMonoGreenHover : kMonoGreenBase;
+                SDL_Color qc = hovQuit ? kMonoGreenHover : kMonoGreenBase;
 
-                // när flyget är klart -> vidare till nästa effekt
-                if (c64WindowIsDone()) {
-                    int idx = (currentEffectIndex + 1) % NUM_EFFECTS;
+                SDL_Texture* backTex = renderText(renderer, menuFont, "[Back]", bc);
+                SDL_Texture* nextTex = renderText(renderer, menuFont, "[Next]", sc);
+                SDL_Texture* quitTex = renderText(renderer, menuFont, "[Main]", qc);
+
+                SDL_Rect bdst = backButtonRect; bdst.y -= static_cast<int>(6.f * backHoverAnim); // cast
+                SDL_Rect ndst = nextButtonRect; ndst.y -= static_cast<int>(6.f * nextHoverAnim); // cast
+                SDL_Rect qdst = quitButtonRect; qdst.y -= static_cast<int>(6.f * quitHoverAnim); // cast
+
+                SDL_RenderCopy(renderer, backTex, nullptr, &bdst);
+                SDL_RenderCopy(renderer, nextTex, nullptr, &ndst);
+                SDL_RenderCopy(renderer, quitTex, nullptr, &qdst);
+
+                applyDotMask(renderer, bdst);
+                applyScanlines(renderer, bdst, 2);
+                applyDotMask(renderer, ndst);
+                applyScanlines(renderer, ndst, 2);
+                applyDotMask(renderer, qdst);
+                applyScanlines(renderer, qdst, 2);
+
+                SDL_DestroyTexture(backTex);
+                SDL_DestroyTexture(nextTex);
+                SDL_DestroyTexture(quitTex);
+
+                if (mouseClick && hovBack && !starTransition) {
+                    int idx = (currentEffectIndex - 1 + NUM_EFFECTS) % NUM_EFFECTS;
                     startStarTransition(idx);
+
                 }
-            }
+                else if (mouseClick && hovNext && !starTransition) {
+                    if (currentPortfolioSubState == VIEW_WIREFRAME_CUBE) {
+                        if (!WF_FlyOut) { WF_FlyOut = true; WF_FlyT = 0.f; }
+                    }
+                    else {
+                        int idx = (currentEffectIndex + 1) % NUM_EFFECTS;
+                        startStarTransition(idx);
+                    }
 
-            SDL_Point mp{ mouseX, mouseY };
-            bool hovBack = SDL_PointInRect(&mp, &backButtonRect);
-            bool hovNext = SDL_PointInRect(&mp, &nextButtonRect);
-            bool hovQuit = SDL_PointInRect(&mp, &quitButtonRect);
-            if (hovBack && !backWasHovered && hoverSound) {
-                Mix_PlayChannel(-1, hoverSound, 0);
-                backWasHovered = true;
-            }
-            else if (!hovBack) {
-                backWasHovered = false;
-            }
-            if (hovNext && !nextWasHovered && hoverSound) {
-                Mix_PlayChannel(-1, hoverSound, 0);
-                nextWasHovered = true;
-            }
-            else if (!hovNext) {
-                nextWasHovered = false;
-            }
-            if (hovQuit && !quitWasHovered && hoverSound) {
-                Mix_PlayChannel(-1, hoverSound, 0);
-                quitWasHovered = true;
-            }
-            else if (!hovQuit) {
-                quitWasHovered = false;
-            }
-
-            backHoverAnim += (hovBack ? 1.f : -1.f) * deltaTime * 6.f;
-            backHoverAnim = clampValue(backHoverAnim, 0.f, 1.f);
-            nextHoverAnim += (hovNext ? 1.f : -1.f) * deltaTime * 6.f;
-            nextHoverAnim = clampValue(nextHoverAnim, 0.f, 1.f);
-            quitHoverAnim += (hovQuit ? 1.f : -1.f) * deltaTime * 6.f;
-            quitHoverAnim = clampValue(quitHoverAnim, 0.f, 1.f);
-
-            SDL_Color bc = hovBack ? kMonoGreenHover : kMonoGreenBase;
-            SDL_Color sc = hovNext ? kMonoGreenHover : kMonoGreenBase;
-            SDL_Color qc = hovQuit ? kMonoGreenHover : kMonoGreenBase;
-
-            SDL_Texture* backTex = renderText(renderer, menuFont, "[Back]", bc);
-            SDL_Texture* nextTex = renderText(renderer, menuFont, "[Next]", sc);
-            SDL_Texture* quitTex = renderText(renderer, menuFont, "[Main]", qc);
-
-            SDL_Rect bdst = backButtonRect; bdst.y -= static_cast<int>(6.f * backHoverAnim); // cast
-            SDL_Rect ndst = nextButtonRect; ndst.y -= static_cast<int>(6.f * nextHoverAnim); // cast
-            SDL_Rect qdst = quitButtonRect; qdst.y -= static_cast<int>(6.f * quitHoverAnim); // cast
-
-            SDL_RenderCopy(renderer, backTex, nullptr, &bdst);
-            SDL_RenderCopy(renderer, nextTex, nullptr, &ndst);
-            SDL_RenderCopy(renderer, quitTex, nullptr, &qdst);
-
-            applyDotMask(renderer, bdst);
-            applyScanlines(renderer, bdst, 2);
-            applyDotMask(renderer, ndst);
-            applyScanlines(renderer, ndst, 2);
-            applyDotMask(renderer, qdst);
-            applyScanlines(renderer, qdst, 2);
-
-            SDL_DestroyTexture(backTex);
-            SDL_DestroyTexture(nextTex);
-            SDL_DestroyTexture(quitTex);
-
-            if (mouseClick && hovBack && !starTransition) {
-                int idx = (currentEffectIndex - 1 + NUM_EFFECTS) % NUM_EFFECTS;
-                startStarTransition(idx);
-
-            }
-            else if (mouseClick && hovNext && !starTransition) {
-                if (currentPortfolioSubState == VIEW_C64_10PRINT) {
-                    // NEXT i C64-vyn triggar bara flyganimationen i rutan
-                    c64RequestFly();
                 }
-                else if (currentPortfolioSubState == VIEW_WIREFRAME_CUBE) {
-                    if (!WF_FlyOut) { WF_FlyOut = true; WF_FlyT = 0.f; }
+                else if (mouseClick && hovQuit && !starTransition) {
+                    startStarTransition(currentEffectIndex, true);
                 }
-                else {
-                    int idx = (currentEffectIndex + 1) % NUM_EFFECTS;
-                    startStarTransition(idx);
-                }
-
-            }
-            else if (mouseClick && hovQuit && !starTransition) {
-                startStarTransition(currentEffectIndex, true);
             }
         }
 
