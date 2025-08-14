@@ -2399,6 +2399,7 @@ void renderFractalZoom(SDL_Renderer* ren, float dt)
     const double zoomFactorPerFly = 0.22;  // zoom more each step
     const double minZoom = 1e-7;           // allow deeper zoom
 
+
     enum Phase { Fly, Hold };
     static bool   firstRun = true;
     static Phase  phase = Fly;
@@ -2426,8 +2427,10 @@ void renderFractalZoom(SDL_Renderer* ren, float dt)
         zoom = startZoom;
     }
 
+
     // Moderate speed multiplier for the fly phase
     phaseTime += (phase == Fly ? dt * 1.3f : dt);
+
 
     auto ease = [](float t) {
         if (t < 0.f) t = 0.f; else if (t > 1.f) t = 1.f;
