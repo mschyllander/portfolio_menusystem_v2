@@ -515,8 +515,8 @@ void initFractalZoom() {
 const int SCREEN_WIDTH = 1920;
 const int SCREEN_HEIGHT = 1080;
 
-const int NUM_SMALL_STARS = 100;   // fewer stars for lighter tunnel
-const int NUM_BIG_STARS = 50;     // adjust big stars accordingly
+const int NUM_SMALL_STARS = 160;   // more stars for better coverage
+const int NUM_BIG_STARS = 80;     // adjust big stars accordingly
 const int NUM_STATIC_STARS = 120;
 const int PONG_MARGIN = 400;
 const int PONG_VMARGIN = 150;
@@ -2393,11 +2393,11 @@ void renderFractalZoom(SDL_Renderer* ren, float dt)
     };
     constexpr int numTargets = int(sizeof(targets) / sizeof(targets[0]));
 
-    // Slightly quicker zoom with a deeper dive into the set
-    const float  flyTime = 0.9f;
-    const float  holdTime = 0.3f;
-    const double zoomFactorPerFly = 0.22;  // zoom more each step
-    const double minZoom = 1e-7;           // allow deeper zoom
+    // Slower, smoother flight into the set
+    const float  flyTime = 2.4f;
+    const float  holdTime = 0.6f;
+    const double zoomFactorPerFly = 0.12;  // gentler zoom per step
+    const double minZoom = 1e-6;           // avoid excessive iterations
 
 
     enum Phase { Fly, Hold };
@@ -2428,8 +2428,8 @@ void renderFractalZoom(SDL_Renderer* ren, float dt)
     }
 
 
-    // Moderate speed multiplier for the fly phase
-    phaseTime += (phase == Fly ? dt * 1.3f : dt);
+    // Even pacing for fly and hold phases
+    phaseTime += dt;
 
 
     auto ease = [](float t) {
@@ -2499,7 +2499,7 @@ void renderFractalZoom(SDL_Renderer* ren, float dt)
     glUniform2f(glGetUniformLocation(mandelbrotShader, "uCenter"), (float)animX, (float)animY);
     glUniform2i(glGetUniformLocation(mandelbrotShader, "uResolution"), viewW, viewH);
 
-    int maxIter = 600;
+    int maxIter = 450; // lighter on the GPU
     glUniform1i(glGetUniformLocation(mandelbrotShader, "uMaxIter"), maxIter);
 
     glBindVertexArray(mandelbrotVAO);
@@ -2518,11 +2518,9 @@ void renderFractalZoom(SDL_Renderer* ren, float dt)
 
 void updateInterference(float dt)
 {
-    // jämna faser som loopar snyggt (wrap är kontinuerlig pga cos/sin)
-    // Use a full 2π wrap so the trigonometric functions loop smoothly
-    // without the visible jump that occurred when the phase wrapped at π.
-    interPhaseA = fmodf(interPhaseA + dt * 0.35f, 2.f * PI);
-    interPhaseB = fmodf(interPhaseB + dt * 0.23f, 2.f * PI);
+    // Smoothly wrap phases using the helper wrapf to avoid visible jumps
+    interPhaseA = wrapf(interPhaseA + dt * 0.35f, 2.f * PI);
+    interPhaseB = wrapf(interPhaseB + dt * 0.23f, 2.f * PI);
 
     const float cx = SCREEN_WIDTH * 0.5f;
     const float cy = SCREEN_HEIGHT * 0.5f;
@@ -3388,6 +3386,9 @@ int main(int argc, char* argv[]) {
         currentMusic = backgroundMusic;
     }
 
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
 
