@@ -463,23 +463,24 @@ static void c64pnDrawTyping(SDL_Renderer* r, TTF_Font* font) {
 static void c64pnDrawPattern(SDL_Renderer* r) {
     c64pnFillRect(r, C64PN.inner, C64PN.backCol);
 
-    SDL_SetRenderDrawColor(r, C64PN.textCol.r, C64PN.textCol.g, C64PN.textCol.b, 255);
+    // Beräkna "pixelstorlek" för 8×8-PETSCII-celler och centrera mönstret
+    int px = std::max(1, std::min(C64PN.cellW, C64PN.cellH) / 8);
+    int cellPixW = 8 * px;
+    int cellPixH = 8 * px;
+    int xOff = (C64PN.cellW - cellPixW) / 2;
+    int yOff = (C64PN.cellH - cellPixH) / 2;
+
     for (int row = 0; row < C64PN.ROWS; ++row) {
         for (int col = 0; col < C64PN.COLS; ++col) {
             const int idx = row * C64PN.COLS + col;
             const auto& cell = C64PN.grid[idx];
             if (!cell.drawn) continue;
 
-            int x0 = C64PN.inner.x + col * C64PN.cellW;
-            int y0 = C64PN.inner.y + row * C64PN.cellH;
-            int x1 = x0 + C64PN.cellW - 1;
-            int y1 = y0 + C64PN.cellH - 1;
-
-            if (cell.d == 1) {
-                SDL_RenderDrawLine(r, x0, y0, x1, y1); // "\\"
-            } else {
-                SDL_RenderDrawLine(r, x0, y1, x1, y0); // "/"
-            }
+            int x0 = C64PN.inner.x + col * C64PN.cellW + xOff;
+            int y0 = C64PN.inner.y + row * C64PN.cellH + yOff;
+            bool backslash = (cell.d == 1);
+            // Rita med 2 "pixlar" tjocka diagonaler likt original-C64
+            drawPETSCIIDiagCell(r, x0, y0, backslash, px, 2, C64PN.textCol, C64PN.backCol);
         }
     }
 }
