@@ -291,10 +291,11 @@ static void drawPETSCIIDiagCell(SDL_Renderer* r,
     fillRect(r, x, y, 8 * px, 8 * px, bg);
 
     // En mörkare variant av förgrundsfärgen för den "klassiska" mittlinjen
+    // (lite mörkare än tidigare för att efterlikna CRT-bleed)
     SDL_Color dark{
-        (Uint8)(fg.r * 0.6f),
-        (Uint8)(fg.g * 0.6f),
-        (Uint8)(fg.b * 0.6f),
+        (Uint8)(fg.r * 0.4f),
+        (Uint8)(fg.g * 0.4f),
+        (Uint8)(fg.b * 0.4f),
         fg.a
     };
 
@@ -335,7 +336,7 @@ static void c64pnDrawPattern(SDL_Renderer* r) {
                                 startY + row * cell,
                                 backslash,
                                 px,
-                                3, // lite tjockare linjer som på en riktig C64
+                                5, // ännu tjockare linjer som på en riktig C64
                                 C64PN.textCol,
                                 C64PN.backCol);
         }
