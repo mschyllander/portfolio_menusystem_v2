@@ -287,14 +287,27 @@ static void drawPETSCIIDiagCell(SDL_Renderer* r,
                                 SDL_Color fg,
                                 SDL_Color bg)
 {
-    fillRect(r, x, y, 8*px, 8*px, bg);
+    // Fyll bakgrundscellen först
+    fillRect(r, x, y, 8 * px, 8 * px, bg);
 
-    SDL_SetRenderDrawColor(r, fg.r, fg.g, fg.b, fg.a);
+    // En mörkare variant av förgrundsfärgen för den "klassiska" mittlinjen
+    SDL_Color dark{
+        (Uint8)(fg.r * 0.6f),
+        (Uint8)(fg.g * 0.6f),
+        (Uint8)(fg.b * 0.6f),
+        fg.a
+    };
+
+    const int half = thickness / 2;
     for (int row = 0; row < 8; ++row) {
         int col = backslash ? row : (7 - row);
         for (int t = 0; t < thickness; ++t) {
-            int cx = col + t; if (cx > 7) break;
-            SDL_Rect p{ x + cx*px, y + row*px, px, px };
+            int cx = col + t - half;
+            if (cx < 0 || cx > 7) continue;
+
+            SDL_Rect p{ x + cx * px, y + row * px, px, px };
+            SDL_Color use = (t == half) ? dark : fg;
+            SDL_SetRenderDrawColor(r, use.r, use.g, use.b, use.a);
             SDL_RenderFillRect(r, &p);
         }
     }
@@ -322,15 +335,16 @@ static void c64pnDrawPattern(SDL_Renderer* r) {
                                 startY + row * cell,
                                 backslash,
                                 px,
-                                2,
+                                3, // lite tjockare linjer som på en riktig C64
                                 C64PN.textCol,
                                 C64PN.backCol);
         }
     }
 
+    // En mörk horisontell band i mitten för autentisk C64-känsla
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-    int bandH = h / 10;
-    SDL_Color band = {0,0,0,55};
+    int bandH = h / 8;
+    SDL_Color band = {0,0,0,90};
     fillRect(r, startX, startY + (h - bandH) / 2, w, bandH, band);
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
 }
