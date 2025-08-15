@@ -264,7 +264,6 @@ struct C64PrintNew {
     SDL_Color borderCol = {  0,  0,130,255}; // dark blue border
     SDL_Color backCol   = {128,200,255,255}; // light blue screen
     SDL_Color textCol   = { 64, 64,160,255}; // darker blue text
-    SDL_Color whiteCol  = {240,240,255,255};
 
     // Screen geometry (computed on start)
     SDL_Rect outer;     // full “C64 monitor” rect
@@ -893,7 +892,6 @@ const float FRACTAL_ZOOM_SPEED = 0.01f; // speed multiplier for fractal zoom
 
 // Plasma polygon settings
 const float SHAPE_DURATION = 10.0f;
-float currentView;
 
 // --- Fireworks ---
 struct FireworkParticle {
@@ -903,6 +901,12 @@ struct FireworkParticle {
 
 std::vector<FireworkParticle> fireworks;  // riktig definition (inte extern)
 float nextBurst = 5.f;                   // riktig definition (inte extern)
+
+struct SmokeParticle {
+    float x, y, vx, vy, life;
+};
+
+static std::vector<SmokeParticle> smoke;
 
 
 struct StaticStar { int x, y; Uint8 baseColor; float alpha, alphaSpeed; int direction; };
@@ -1060,7 +1064,6 @@ float exitTimer = 0.1f;
 bool explosionReturnToMenu = false;
 bool explosionAdvanceEffect = false;
 int  explosionNextIndex = 0;
-float fractalZoomProgress = 0.f;
 
 
 struct InterferenceCircle { float x, y, r, dx, dy; bool white; };
@@ -1092,46 +1095,22 @@ struct C64WindowState {
     // Grid
     int gridW = 42;                // typisk C64-breddkänsla, justera fritt
     int gridH = 25;
-    int totalCells = gridW * gridH;
-    float cellsPerSec = 700.f;     // hur snabbt “PRINT” sker
-    int revealCount = 0;
-
-    // i C64WindowState
-    float rotX = 0.f, rotY = 0.f;   // aktuella rotationsvinklar (rad)
-    float idleAmp = 0.10f;          // ~6 grader
-    float idleSpeed = 0.8f;         // svänghastighet
-    float zDepth = 0.f;             // Z-förflyttning (0 till negativt vid fly)
-    bool  flyRequested = false;     // sätts när man klickar Next (efter fylld ruta)
-
 
     // Timing
     C64Phase phase = C64_FILLING;
     float holdTime = 0.6f;         // kort paus när den är full
     float holdT = 0.f;
 
-    // Motion (flyg iväg)
-    float tFly = 0.f;
-    float flyDuration = 2.2f;
-
     // Window appearance / transform
     float winWidth = 0.72f;        // som andel av skärmbredd
-    float winAR = 4.f / 3.f;         // fönstrets aspekt, C64-känsla
     float alpha = 0.88f;           // bakgrunds-opacity
-    float edgeAlpha = 1.0f;
     float thickness = 0.085f;      // linjetjocklek i cell (0..1)
-
-    // 2D transform (NDC-ish)
-    float posX = 0.f;              // i NDC-värld: 0 = center
-    float posY = 0.f;
     float scale = 1.0f;            // 1.0 = winWidth används direkt
 
     // OpenGL
     GLuint prog = 0;
     GLuint vao = 0, vbo = 0;
     GLuint randTex = 0;
-
-    // For cleanup / gating
-    bool initialized = false;
 } C64;
 
 
@@ -1408,15 +1387,6 @@ void startBackgroundMusic() {
         Mix_PlayMusic(backgroundMusic, -1);
         currentMusic = backgroundMusic;
     }
-}
-
-float getMusicTime() {
-    if (currentMusic) {
-        double p = Mix_GetMusicPosition(currentMusic);
-        if (p >= 0.0)
-            return static_cast<float>(p);
-    }
-    return elapsedTime;
 }
 
 
@@ -3036,12 +3006,29 @@ void updateFireworks(float dt)
         p.y += p.vy * dt;
         p.vy += 120.f * dt;
 
+        if (rand() % 2 == 0) {
+            float svx = (rand() / (float)RAND_MAX - 0.5f) * 20.f;
+            float svy = -40.f - (rand() % 20);
+            smoke.push_back({ p.x, p.y, svx, svy, 1.5f });
+        }
+
         if (p.life <= 0.f) {
             fireworks.erase(fireworks.begin() + (ptrdiff_t)i);
         }
         else {
             ++i;
         }
+    }
+
+    for (size_t i = 0; i < smoke.size(); ) {
+        auto& s = smoke[i];
+        s.life -= dt;
+        s.x += s.vx * dt;
+        s.y += s.vy * dt;
+        s.vx *= 0.98f;
+        s.vy *= 0.98f;
+        if (s.life <= 0.f) smoke.erase(smoke.begin() + (ptrdiff_t)i);
+        else ++i;
     }
 }
 
@@ -3055,6 +3042,14 @@ static void drawSmallFilledCircle(SDL_Renderer* ren, int cx, int cy, int radius)
 
 void renderFireworks(SDL_Renderer* ren, float dt) {
     updateFireworks(dt);
+
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+    for (auto& s : smoke) {
+        float lifeFrac = s.life / 1.5f;
+        Uint8 a = Uint8(lifeFrac * 120);
+        SDL_SetRenderDrawColor(ren, 80, 80, 80, a);
+        drawSmallFilledCircle(ren, int(s.x), int(s.y), 2);
+    }
 
     // Använd ADD-blend för glow
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_ADD);
@@ -3269,6 +3264,7 @@ void renderAboutC64Typewriter(SDL_Renderer* ren, float dt) {
 void startExitExplosion(bool returnToMenu, bool nextEffect, int nextIndex)
 {
     fireworks.clear();
+    smoke.clear();
 
     auto spawn = [](float x, float y, SDL_Color col, int count, float speedBase) {
         for (int i = 0; i < count; ++i) {
@@ -3744,7 +3740,6 @@ void updateC64Window(float dt) {
     }
 }
 
-bool c64WindowIsDone() { return C64Done; }
 void c64RequestFly() { /* valfritt: resetta för ny reveal */ startC64Window(); }
 
 // Renderar allt i en pass: decrunch-bg + panel i mitten
