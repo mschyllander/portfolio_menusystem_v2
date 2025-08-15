@@ -3662,6 +3662,8 @@ static bool C64Done = false;
 static bool C64Boot = false;
 static float C64BootT = 0.f;
 static float C64HoldT = 0.f;                     // time to hold pattern after reveal
+static bool startType = false;
+static float typeDelay = 1.0f;
 
 // Text lines and timing for the boot sequence
 static constexpr char C64CodeLine[] = "10 PRINT CHR$(205.5+RND(1));:GOTO 10";
@@ -3736,9 +3738,8 @@ void updateC64Window(float dt) {
         C64Reveal = std::min(total, C64Reveal + add);
         if (C64Reveal == total) {
             C64HoldT += dt;
-            if (C64HoldT >= C64HoldDuration) {
-                C64Done = true; // pattern shown long enough
-            }
+            if (!startType && C64HoldT >= typeDelay) startType = true;
+            if (C64HoldT >= C64HoldDuration) C64Done = true;
         }
     }
 }
@@ -3803,21 +3804,23 @@ void renderC64Window(int screenW, int screenH) {
         // Använd en lokal alias för tid
         const float tt = C64PN.t;  // eller C64PN.total om du vill använda total-tid
 
-        // Skriv rad med programkod efter en liten delay
-        if (tt > C64BootDelay) {
-            const int maxChars = int(sizeof(C64CodeLine) - 1);
-            const int chars = std::min<int>(int((tt - C64BootDelay) * C64TypeSpeed), maxChars);
-            std::string code(C64CodeLine, chars);
-            drawLine(code.c_str(), 5);
-        }
+        if (startType) {
+            // Skriv rad med programkod efter en liten delay
+            if (tt > C64BootDelay) {
+                const int maxChars = int(sizeof(C64CodeLine) - 1);
+                const int chars = std::min<int>(int((tt - C64BootDelay) * C64TypeSpeed), maxChars);
+                std::string code(C64CodeLine, chars);
+                drawLine(code.c_str(), 5);
+            }
 
-        // Skriv "RUN" efter att koden är färdig + ytterligare delay
-        const float startRun = C64BootDelay + (sizeof(C64CodeLine) - 1) / C64TypeSpeed + C64RunDelay;
-        if (tt > startRun) {
-            const int maxChars = int(sizeof(C64RunLine) - 1);
-            const int chars = std::min<int>(int((tt - startRun) * C64TypeSpeed), maxChars);
-            std::string runStr(C64RunLine, chars);
-            drawLine(runStr.c_str(), 6);
+            // Skriv "RUN" efter att koden är färdig + ytterligare delay
+            const float startRun = C64BootDelay + (sizeof(C64CodeLine) - 1) / C64TypeSpeed + C64RunDelay;
+            if (tt > startRun) {
+                const int maxChars = int(sizeof(C64RunLine) - 1);
+                const int chars = std::min<int>(int((tt - startRun) * C64TypeSpeed), maxChars);
+                std::string runStr(C64RunLine, chars);
+                drawLine(runStr.c_str(), 6);
+            }
         }
     }
 }
