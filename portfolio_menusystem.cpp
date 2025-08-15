@@ -41,10 +41,185 @@
 #include <tuple>
 #include <random>
 
-
+struct Star;
 
 SDL_Window* gWindow = nullptr;
 SDL_GLContext gGL = nullptr;
+
+static inline void fillRect(SDL_Renderer* r, int x, int y, int w, int h, SDL_Color c) {
+    SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
+    SDL_Rect rc{ x,y,w,h };
+    SDL_RenderFillRect(r, &rc);
+}
+
+// 8×8-diagonal som “tile”, 2 px tjock (C64-stuk)
+// backslash = '\' (↘), annars slash '/' (↗)
+static void drawPETSCIIDiagCell(SDL_Renderer* r,
+    int x, int y,
+    bool backslash,
+    int px,              // pixelstorlek (heltal: 2,3,4…)
+    int thickness,       // 2 = C64-ish
+    SDL_Color fg,
+    SDL_Color bg)
+{
+    // bakgrund
+    fillRect(r, x, y, 8 * px, 8 * px, bg);
+
+    SDL_SetRenderDrawColor(r, fg.r, fg.g, fg.b, fg.a);
+    for (int row = 0; row < 8; ++row) {
+        int col = backslash ? row : (7 - row);    // diag-position
+        for (int t = 0; t < thickness; ++t) {     // gör den tjockare
+            int cx = col + t; if (cx > 7) break;
+            SDL_Rect p{ x + cx * px, y + row * px, px, px };
+            SDL_RenderFillRect(r, &p);
+        }
+    }
+}
+
+
+// --- C64 shaders (globala strängar) ---
+static const char* c64_vs = R"GLSL(
+#version 330 core
+layout (location=0) in vec2 aPos;
+out vec2 vUV;
+void main(){
+    vUV = aPos * 0.5 + 0.5;
+    gl_Position = vec4(aPos, 0.0, 1.0);
+}
+)GLSL";
+
+// === C64 10 PRINT — vertex shader (panel + bg i en pass) ===
+static const char* c64_fs = R"GLSL(
+// C64 10 PRINT — fragment shader (panel + decrunch bg + gated reveal)
+#version 330 core
+in vec2 vUV;
+out vec4 FragColor;
+
+uniform sampler2D uRand;        // GL_R8, size == uGrid
+uniform ivec2  uGrid;           // gridW, gridH
+uniform int    uRevealCount;    // hur många celler visade
+uniform float  uThickness;      // linjetjocklek (cell-UV)
+uniform vec3   uInk;            // linjefärg (nära vit)
+uniform vec3   uBG;             // panel bg (C64-blå)
+uniform vec3   uEdge;           // panelens kantfärg
+uniform vec4   uPanelRect;      // {cx,cy,w,h} i [0..1], center + size
+uniform float  uTime;           // sekunder
+uniform float  uDecomp;         // 0..1, dekomprimeringsprogress
+
+// SDF: avstånd till linjesegment
+float sdSegment(vec2 p, vec2 a, vec2 b){
+    vec2 pa = p - a, ba = b - a;
+    float h = clamp(dot(pa,ba)/max(dot(ba,ba),1e-6), 0.0, 1.0);
+    return length(pa - ba*h);
+}
+
+// Litet brus
+float hash21(vec2 p){
+    p = fract(p*vec2(123.34, 456.21));
+    p += dot(p, p + 34.345);
+    return fract(p.x*p.y);
+}
+
+// Decrunch-bakgrund med scanbars/snow/progressbar
+vec3 decrunchBG(vec2 uv, float t, float prog){
+    float bars = smoothstep(0.0, 0.2, 0.5 + 0.5 * sin(uv.y*120.0 + t*40.0));
+    float snow = step(0.965, hash21(uv*vec2(640.0, 360.0) + t*60.0));
+    float band = smoothstep(0.45,0.47, abs(uv.y-0.7));
+    float scan = 0.25*bars + 0.10*snow + 0.08*band;
+
+    float barY = 0.06, barH = 0.012;
+    float x = uv.x, y = uv.y;
+    float frameOK = step(barY, y) * step(y, barY+barH) * step(0.12, x) * step(x, 0.88);
+    float fill    = step(0.12, x) * step(x, mix(0.12, 0.88, prog)) * step(barY, y) * step(y, barY+barH);
+
+    vec3 base     = vec3(0.02, 0.03, 0.05) + scan;
+    vec3 frameCol = vec3(0.10, 1.00, 0.70);
+    vec3 fillCol  = vec3(0.20, 0.90, 0.40);
+
+    float edgeX = step(0.119, x) * step(x, 0.881);
+    float edgeY1 = step(barY, y) * step(y, barY + 0.002);
+    float edgeY2 = step(barY + barH - 0.002, y) * step(y, barY + barH);
+
+    vec3 progBar = base + frameCol * (edgeX * (edgeY1 + edgeY2)) + fillCol * fill * 0.9;
+    // Om vi inte ligger ovanför progressbaren, lämna bara base+scan
+    return mix(base, progBar, frameOK);
+}
+
+void main(){
+    vec2 uv = vUV;
+
+    // Panel-rect
+    vec2 c = uPanelRect.xy;
+    vec2 s = uPanelRect.zw;
+    vec2 minP = c - 0.5*s;
+    vec2 maxP = c + 0.5*s;
+
+    bool inPanel = all(greaterThanEqual(uv, minP)) && all(lessThanEqual(uv, maxP));
+
+    // Utanför panelen: kör decrunch tills klar, SEN transparent så SDL kan synas
+    if (!inPanel) {
+        if (uDecomp < 1.0) {
+            FragColor = vec4(decrunchBG(uv, uTime, uDecomp), 1.0);
+        } else {
+            FragColor = vec4(0.0); // transparent
+        }
+        return;
+    }
+
+    // Panel-UV [0..1]
+    vec2 puv = clamp((uv - minP) / max(s, vec2(1e-6)), 0.0, 1.0);
+
+    // Tunn bevel/ram
+    float pad = 0.015;
+    float inner = step(pad, puv.x) * step(pad, puv.y) * step(pad, 1.0-puv.x) * step(pad, 1.0-puv.y);
+    vec3  base = mix(uEdge, uBG, 0.95);
+    vec3  panelCol = mix(uEdge * 0.6 + uBG * 0.4, base, inner);
+
+    // Under decrunch: visa bara panelfärg (ingen reveal ännu)
+    if (uDecomp < 1.0) {
+        FragColor = vec4(panelCol, 1.0);
+        return;
+    }
+
+    // Grid + reveal i TOP-LEFT-ordning (radvis)
+    ivec2 grid  = uGrid;
+    vec2  g     = vec2(grid);
+    vec2  cellf = floor(puv * g);
+
+    int colIdx      = clamp(int(cellf.x), 0, grid.x - 1);              // 0..W-1, vänster->höger
+    int rowFromTop  = clamp(grid.y - 1 - int(cellf.y), 0, grid.y - 1); // topp->botten
+    int idx         = rowFromTop * grid.x + colIdx;
+
+    if (idx >= uRevealCount) {
+        FragColor = vec4(panelCol, 1.0);
+        return;
+    }
+
+    // Lokala cell-coords
+    ivec2 cell = ivec2(colIdx, clamp(int(cellf.y), 0, grid.y - 1));
+    vec2  f    = fract(puv * g);
+
+    // '/' eller '\'
+    float pick = texelFetch(uRand, cell, 0).r;
+
+    // Lite fetare C64-slash (justeras med uThickness)
+    float d = (pick < 0.5)
+        ? sdSegment(f, vec2(0.05,0.05), vec2(0.95,0.95))
+        : sdSegment(f, vec2(0.05,0.95), vec2(0.95,0.05));
+
+    // Linjemask (sätt uThickness ~ 0.12 från CPU)
+    float lineMask = smoothstep(uThickness, 0.12, d);
+
+    // Subtila scanlines i panelen
+    float scan = 1.0 - 0.06 * (0.5 + 0.5 * sin(puv.y * 1200.0));
+
+    // Slutfärg
+    vec3 finalCol = mix(panelCol, uInk, lineMask) * scan;
+    FragColor = vec4(clamp(finalCol, 0.0, 1.0), 1.0);
+}
+)GLSL";
+
+
 
 static inline void ensureGLContextCurrent() {
     if (SDL_GL_GetCurrentContext() != gGL) {
@@ -104,6 +279,17 @@ struct C64PrintNew {
     bool startedFireworks = false;
 
 } C64PN;
+
+void renderFireworks(SDL_Renderer* renderer, float dt);
+
+
+// Global senaste dt (du har redan denna):
+extern float gLastDt;
+
+// Wrappern (placera i .cpp, efter att gLastDt finns)
+inline void renderFireworks(SDL_Renderer* renderer) {
+    renderFireworks(renderer, gLastDt);
+}
 
 static inline void c64pnFillRect(SDL_Renderer* r, const SDL_Rect& rc, SDL_Color c) {
     SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
@@ -228,6 +414,7 @@ static void c64pnUpdate(float dt) {
     }
 }
 
+
 static void c64pnDrawRasterBars(SDL_Renderer* r, const SDL_Rect& zone, float t) {
     // Simple moving horizontal bars to sell the “decompression” vibe
     int barH = 8;
@@ -267,91 +454,35 @@ static void c64pnDrawTyping(SDL_Renderer* r, TTF_Font* font) {
     std::string line = C64PN.typedLine;
     c64pnDrawText(r, font, line.c_str(), C64PN.textCol, x, y);
     if (C64PN.cursorOn) {
-        int approxW = static_cast<int>(line.size() * C64PN.cellW * 0.6f);
+        int approxW = (int)line.size() * (C64PN.cellW * 0.6f);
         SDL_Rect cur{ x + approxW + 2, y + C64PN.cellH/2, C64PN.cellW/2, C64PN.cellH/6 };
         c64pnFillRect(r, cur, C64PN.textCol);
-    }
-}
-
-static inline void fillRect(SDL_Renderer* r, int x,int y,int w,int h, SDL_Color c){
-    SDL_SetRenderDrawColor(r, c.r,c.g,c.b,c.a);
-    SDL_Rect rc{ x,y,w,h };
-    SDL_RenderFillRect(r, &rc);
-}
-
-static void drawPETSCIIDiagCell(SDL_Renderer* r,
-                                int x, int y,
-                                bool backslash,
-                                int px,
-                                int thickness,
-                                SDL_Color fg,
-                                SDL_Color bg)
-{
-    // Fyll bakgrundscellen först
-    fillRect(r, x, y, 8 * px, 8 * px, bg);
-
-    // En mörkare variant av förgrundsfärgen för den "klassiska" mittlinjen
-    // (lite mörkare än tidigare för att efterlikna CRT-bleed)
-    SDL_Color dark{
-        (Uint8)(fg.r * 0.4f),
-        (Uint8)(fg.g * 0.4f),
-        (Uint8)(fg.b * 0.4f),
-        fg.a
-    };
-
-    const int half = thickness / 2;
-    for (int row = 0; row < 8; ++row) {
-        int col = backslash ? row : (7 - row);
-        for (int t = 0; t < thickness; ++t) {
-            int cx = col + t - half;
-            if (cx < 0 || cx > 7) continue;
-
-            SDL_Rect p{ x + cx * px, y + row * px, px, px };
-            SDL_Color use = (t == half) ? dark : fg;
-            SDL_SetRenderDrawColor(r, use.r, use.g, use.b, use.a);
-            SDL_RenderFillRect(r, &p);
-        }
     }
 }
 
 static void c64pnDrawPattern(SDL_Renderer* r) {
     c64pnFillRect(r, C64PN.inner, C64PN.backCol);
 
-    int px = std::max(1, std::min(C64PN.inner.w / (C64PN.COLS * 8), C64PN.inner.h / (C64PN.ROWS * 8)));
-    int cell = 8 * px;
-    int w = C64PN.COLS * cell;
-    int h = C64PN.ROWS * cell;
-    int startX = C64PN.inner.x + (C64PN.inner.w - w) / 2;
-    int startY = C64PN.inner.y + (C64PN.inner.h - h) / 2;
-
+    SDL_SetRenderDrawColor(r, C64PN.textCol.r, C64PN.textCol.g, C64PN.textCol.b, 255);
     for (int row = 0; row < C64PN.ROWS; ++row) {
         for (int col = 0; col < C64PN.COLS; ++col) {
             const int idx = row * C64PN.COLS + col;
-            const auto& cellInfo = C64PN.grid[idx];
-            if (!cellInfo.drawn) continue;
+            const auto& cell = C64PN.grid[idx];
+            if (!cell.drawn) continue;
 
-            bool backslash = (cellInfo.d == 1);
-            drawPETSCIIDiagCell(r,
-                                startX + col * cell,
-                                startY + row * cell,
-                                backslash,
-                                px,
-                                5, // ännu tjockare linjer som på en riktig C64
-                                C64PN.textCol,
-                                C64PN.backCol);
+            int x0 = C64PN.inner.x + col * C64PN.cellW;
+            int y0 = C64PN.inner.y + row * C64PN.cellH;
+            int x1 = x0 + C64PN.cellW - 1;
+            int y1 = y0 + C64PN.cellH - 1;
+
+            if (cell.d == 1) {
+                SDL_RenderDrawLine(r, x0, y0, x1, y1); // "\\"
+            } else {
+                SDL_RenderDrawLine(r, x0, y1, x1, y0); // "/"
+            }
         }
     }
-
-    // En mörk horisontell band i mitten för autentisk C64-känsla
-    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-    int bandH = h / 8;
-    SDL_Color band = {0,0,0,90};
-    fillRect(r, startX, startY + (h - bandH) / 2, w, bandH, band);
-    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
 }
-
-void updateFireworks(float dt);
-void renderFireworks(SDL_Renderer* ren, float dt);
 
 static void renderC64PRINT_NEW(SDL_Renderer* renderer, TTF_Font* font, float dt, int screenW, int screenH) {
     if (!C64PN.started) c64pnStart(screenW, screenH);
@@ -384,6 +515,7 @@ static void renderC64PRINT_NEW(SDL_Renderer* renderer, TTF_Font* font, float dt,
         case C64PrintNew::FIREWORKS: {
             c64pnDrawPattern(renderer);
             renderFireworks(renderer, dt);
+
         } break;
 
         case C64PrintNew::DONE:
@@ -395,6 +527,28 @@ static void renderC64PRINT_NEW(SDL_Renderer* renderer, TTF_Font* font, float dt,
 static bool c64PRINT_NEW_isDone() {
     return C64PN.done;
 }
+
+// Reset C64PRINT_NEW to initial state
+static void c64pnHardReset(int screenW, int screenH) {
+    C64PN = C64PrintNew{};          // nollar alla fält
+    c64pnLayout(screenW, screenH);  // räkna om geometri
+    c64pnResetGrid();               // fyll nytt mönster
+    C64PN.started = true;           // markera igång
+}
+
+void renderStaticStars(SDL_Renderer* ren);
+
+struct InterfParam {
+    float ax, ay;   // amplitud i px (hur långt de rör sig i X/Y)
+    int   kx, ky;   // heltals-cykler per loop (garanterar sömlös looping)
+    float phx, phy; // faser vid t=0
+    float baseR, ampR; // radie-bas och “andning”
+};
+static std::vector<InterfParam> I_params;
+static const float I_PERIOD = 10.0f; // sekunder per komplett loop
+
+static inline float fracf(float x) { return x - floorf(x); }
+
 
 // --- Plasma globals (måste finnas före användning) ---
 static SDL_Texture* gPlasma = nullptr;
@@ -563,6 +717,16 @@ static void applyDotMask(SDL_Renderer* ren, const SDL_Rect& dst) {
     }
 }
 
+static void applyScanlines(SDL_Renderer* ren, const SDL_Rect& dst) {
+    // tunna, halvtransparenta svarta linjer varannan rad
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(ren, 0, 0, 0, 55);
+    for (int y = dst.y; y < dst.y + dst.h; y += 2) {
+        SDL_RenderDrawLine(ren, dst.x, y, dst.x + dst.w, y);
+    }
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+}
+
 // 1x2 pattern: dark row + transparent row, tiled vertically
 static SDL_Texture* getScanlineTex(SDL_Renderer* ren) {
     static SDL_Texture* tex = nullptr;
@@ -623,16 +787,64 @@ static float WF_FlyT = 0.f;
 static float WF_FlyDur = 1.2f; // längd på fly-out i sekunder
 static bool  F_FlyOut = false;
 static float F_FlyT = 0.f;
-static const float F_FlyDur = 1.2f;
+static const float F_FlyDur = 0.2f;
 static bool  I_FlyOut = false;
 static float I_FlyT = 0.f;
 static const float I_FlyDur = 1.2f;
 static float MENU_BASE_SCALE = 1.6f;   // större menytext
+static float I_time = 0.f;          // kontinuerlig tid för interference
+static const float I_LOOP = 6.0f;   // sekunder per loop (justera)
+
 
 GLuint mandelbrotShader = 0;
 GLuint mandelbrotVAO = 0;
 GLuint mandelbrotVBO = 0;
 
+void renderFractalZoom(SDL_Renderer* ren, float dt, float scale = 1.0f);
+
+// --- GL->SDL blit helpers ---
+static SDL_Texture* gFractalTex = nullptr;
+
+static void ensureFractalTexture(SDL_Renderer* r, int w, int h) {
+    if (gFractalTex) {
+        int tw, th;
+        SDL_QueryTexture(gFractalTex, nullptr, nullptr, &tw, &th);
+        if (tw == w && th == h) return;
+        SDL_DestroyTexture(gFractalTex);
+        gFractalTex = nullptr;
+    }
+    gFractalTex = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888,
+        SDL_TEXTUREACCESS_STREAMING, w, h);
+    SDL_SetTextureBlendMode(gFractalTex, SDL_BLENDMODE_BLEND);
+}
+
+// Läser backbuffer från GL och stoppar in i en SDL-textur (flippad så den hamnar rätt i SDL)
+static void blitGLToSDLTexture(SDL_Texture* dst, int w, int h) {
+    std::vector<uint8_t> pix(w * h * 4);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadBuffer(GL_BACK); // säkerställ
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, pix.data());
+
+    // flip Y (OpenGL har (0,0) i nedre vänstra hörnet)
+    std::vector<uint8_t> flip(w * h * 4);
+    for (int y = 0; y < h; ++y) {
+        memcpy(flip.data() + (h - 1 - y) * w * 4,
+            pix.data() + y * w * 4,
+            w * 4);
+    }
+
+    void* texPixels = nullptr; int pitch = 0;
+    if (SDL_LockTexture(dst, nullptr, &texPixels, &pitch) == 0) {
+        // pitch kan skilja; kopiera rad för rad
+        const uint8_t* src = flip.data();
+        for (int y = 0; y < h; ++y) {
+            memcpy((uint8_t*)texPixels + y * pitch, src + y * w * 4, w * 4);
+        }
+        SDL_UnlockTexture(dst);
+    }
+}
+
+// ---------------------------------------------------------------------------------
 
 // --- Wireframe settings and helpers ---
 static int  WF_LINE_THICKNESS = 1;    // 0 = inga linjer, 1 = tunnast, 2..n = tjockare
@@ -759,7 +971,7 @@ enum PortfolioSubState : int {
 
 void initStaticStars();
 void renderStaticStars(SDL_Renderer*);
-void updateStars(float deltaTime);
+// void updateStars(float deltaTime);
 void renderStars(SDL_Renderer* ren, std::vector<Star>& stars, SDL_Color col);
 void initMenu();
 void renderMenu(float deltaTime, int mouseX, int mouseY, bool mouseClick);
@@ -775,15 +987,13 @@ void renderSolidCubeGL(float angleX, float angleY, float time);
 void renderFilledPrismGL(int sides, float ax, float ay, float time);
 void renderCylinderGL(float angle);
 void renderDotPrismGL(int sides, float ax, float ay, float time);
-void drawFilledCircle(float x, float y, float radius, int segments, SDL_Color color);
+// void drawFilledCircle(float x, float y, float radius, int segments, SDL_Color color);
 static void drawGreyCube();
 static void drawSolidPrism(int sides);
 void renderWireframePrism(SDL_Renderer*, int sides, float ax, float ay, SDL_Color);
 SDL_Color rainbowColor(float t);
 SDL_Color plasmaColor(int x, int y, float time);
-
 void renderPlasma(SDL_Renderer*, float time);
-void renderFractalZoom(SDL_Renderer*, float deltaTime, float scale = 1.0f);
 void initInterference();
 void updateInterference(float dt);
 void renderInterference(SDL_Renderer*);
@@ -793,9 +1003,11 @@ void renderSnakeGame(SDL_Renderer* ren);
 void initPongGame();
 void updatePongGame(float dt);
 void renderPongGame(SDL_Renderer* ren, float dt);       // main one
+void renderFireworks(SDL_Renderer*, float dt);
 void renderLogoWithReflection(SDL_Renderer*, SDL_Texture*, int baseX);
 void startExitExplosion(bool returnToMenu = false, bool nextEffect = false, int nextIndex = 0);
 void startStarTransition(int newIndex, bool toMenu = false);
+static void drawThickLine(SDL_Renderer* ren, int x1, int y1, int x2, int y2, int t);
 static void drawSmallFilledCircle(SDL_Renderer* ren, int cx, int cy, int radius);
 static void renderPrismSidesWithTexture(SDL_Renderer* ren, SDL_Texture* tex,
     int sides, float ax, float ay,
@@ -874,7 +1086,7 @@ static inline bool intersectY(const SDL_Point& p0, const SDL_Point& p1, int y, f
 
 
 // C64 program struktur
-#if 0
+
 struct C64WindowState {
     // Grid
     int gridW = 42;                // typisk C64-breddkänsla, justera fritt
@@ -1094,41 +1306,79 @@ static void renderPrismPlasmaFillSDL(SDL_Renderer* ren,
 
 void initInterference()
 {
-    // Nollställ faser så start blir deterministisk
+    // Nollställ faser (om du använder dem någon annanstans)
     interPhaseA = 0.f;
     interPhaseB = 0.f;
 
     interferenceCircles.clear();
     interferenceCircles.reserve(5);
 
-    // Minst två grupper – en vit (ADD-blend i render), en mörk (BLEND)
-    InterferenceCircle g1{};
-    g1.x = SCREEN_WIDTH * 0.30f;
-    g1.y = SCREEN_HEIGHT * 0.50f;
-    g1.r = 160.f;
-    g1.dx = g1.dy = 0.f;
-    g1.white = true;
-    interferenceCircles.push_back(g1);
+    // Hur många cirklar totalt (2 bas + 3 extra)
+    const int N = 5;
+    I_params.clear();
+    I_params.resize(N);
 
-    InterferenceCircle g2{};
-    g2.x = SCREEN_WIDTH * 0.70f;
-    g2.y = SCREEN_HEIGHT * 0.50f;
-    g2.r = 160.f;
-    g2.dx = g2.dy = 0.f;
-    g2.white = false;
-    interferenceCircles.push_back(g2);
+    // Hjälpfunktion för “deterministiskt slump” baserat på index
+    auto u = [](int i, float seed) {
+        return fracf(sinf(seed * float(i + 1)) * 43758.5453f);
+        };
 
-    // (valfritt) Några extra för fylligare bild
-    for (int i = 0; i < 3; ++i) {
+    // Förval: två “grupper” (vit/mörk)
+    for (int i = 0; i < N; ++i) {
         InterferenceCircle c{};
-        c.x = float(rand() % SCREEN_WIDTH);
-        c.y = float(rand() % SCREEN_HEIGHT);
-        c.r = 120.f + float(rand() % 100);
-        c.dx = c.dy = 0.f;          // rörelse sköts i updateInterference via faserna
-        c.white = ((i & 1) == 0);   // varannan vit/mörk
+        InterfParam p{};
+
+        // Amplituder – täck stor del av skärmen
+        float u1 = u(i, 13.37f);
+        float u2 = u(i, 23.71f);
+        p.ax = SCREEN_WIDTH * (0.36f + 0.12f * u1);   // ≈ 36–48% av bredd
+        p.ay = SCREEN_HEIGHT * (0.26f + 0.12f * u2);   // ≈ 26–38% av höjd
+
+        // Heltals-cykler per loop (garanterar att t=0 och t=I_PERIOD ger samma pos)
+        // Välj ur små men olika uppsättningar för variation
+        static const int KX[] = { 3, 4, 5, 6, 7 };
+        static const int KY[] = { 2, 3, 4, 5, 6 };
+        p.kx = KX[i % (int)(sizeof(KX) / sizeof(KX[0]))];
+        p.ky = KY[(i * 2) % (int)(sizeof(KY) / sizeof(KY[0]))];
+
+        // Faser – deterministiska men olika
+        float u3 = u(i, 7.19f);
+        float u4 = u(i, 5.11f);
+        p.phx = 2.f * PI * u3;
+        p.phy = 2.f * PI * u4;
+
+        // Radie – större andning på de första två för mer “interference”
+        if (i < 2) {
+            p.baseR = 140.f;
+            p.ampR = 110.f;
+        }
+        else {
+            float u5 = u(i, 3.33f);
+            float u6 = u(i, 9.01f);
+            p.baseR = 120.f + 40.f * u5;   // 120–160
+            p.ampR = 60.f + 40.f * u6;   // 60–100
+        }
+
+        // Startposition vid t=0 (samma som vid t=I_PERIOD)
+        float cx0 = SCREEN_WIDTH * 0.5f + p.ax * sinf(p.phx);
+        float cy0 = SCREEN_HEIGHT * 0.5f + p.ay * sinf(p.phy);
+        c.x = cx0;
+        c.y = cy0;
+
+        // Start-radie – ta en “mittpunkt” (du kan lika gärna ta baseR eller baseR+ampR*sinf(...))
+        c.r = p.baseR;
+
+        // Vi använder inte dx/dy längre för pos, men sätt 0 för säkerhets skull
+        c.dx = 0.f; c.dy = 0.f;
+
+        // Varannan vit/mörk
+        c.white = (i % 2 == 0);
+
         interferenceCircles.push_back(c);
+        I_params[i] = p;
     }
 }
+
 
 int logoWidth = 0, logoHeight = 0;
 AppState currentState = STATE_MENU;
@@ -1885,7 +2135,7 @@ static void drawCone(int segs) {
 static const int GRID_W = 20;
 static const int GRID_H = 20;
 static const int CELL = 20;
-static const int WORM_MAX_SCORE = 10;
+static const int WORM_MAX_SCORE = 20;
 static int snakeDir = 0;
 static float snakeTimer = 0.f;
 static SDL_Point food{ 0,0 };
@@ -1896,18 +2146,10 @@ static bool snakeExploded = false;       // <-- NEW: Explosion screen flag
 static float snakeExplodeTimer = 0.f;    // <-- NEW: For display timing
 std::vector<SDL_Point> snake;
 
-// --- Simple pong minigame ---
-static SDL_Rect paddleLeft, paddleRight;
-static float ballX = 0.f, ballY = 0.f, ballVX = 0.f, ballVY = 0.f;
-static int paddleDir = 0; // -1 up, 1 down
-static int pongScore = 0;
-static bool pongGameOver = false;
-static float pongGameOverTimer = 0.f;
-
 // --- Tunables för fartskala ---
 static inline float snakeStepInterval(int score) {
     const float BASE = 0.15f;   // startfart
-    const float STEP = 0.010f;  // snabbare per poäng
+    const float STEP = 0.020f;  // snabbare per poäng
     const float MINI = 0.055f;  // golv (maxfart)
     float inter = BASE - STEP * score;
     return (inter < MINI) ? MINI : inter;
@@ -2064,7 +2306,7 @@ void renderSnakeGame(SDL_Renderer* ren) {
         SDL_RenderFillRect(ren, &bg);
 
         // WIN/LOSE-meddelande inne i panelen
-        std::string msg = snakeWin ? "WIN" : "GAME OVER";
+        std::string msg = snakeWin ? "-=WIN=-" : "-=GAME OVER=-";
         SDL_Color col = snakeWin ? SDL_Color{ 0,255,0,255 } : SDL_Color{ 255,80,80,255 };
         TTF_Font* bigF = bigFont ? bigFont : menuFont;
         if (SDL_Texture* g = renderText(ren, bigF, msg, col)) {
@@ -2079,6 +2321,14 @@ void renderSnakeGame(SDL_Renderer* ren) {
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
 }
 
+// --- Simple pong minigame ---
+static SDL_Rect paddleLeft, paddleRight;
+static float ballX = 0.f, ballY = 0.f, ballVX = 0.f, ballVY = 0.f;
+static int paddleDir = 0; // -1 up, 1 down
+static int pongScore = 0;
+static bool pongGameOver = false;
+static float pongGameOverTimer = 0.f;
+
 //  --- Pong minigame ---
 // Local FX for Pong (flash + boxed fireworks)
 static float  pongFlashT = 0.f;                 // time left for grey flash on paddle hit
@@ -2088,15 +2338,15 @@ static std::vector<FireworkParticle> pongFireworks; // local fireworks just for 
 
 // Layout & tuning
 static const int   PONG_PADDLE_INSET = 14;      // distance from frame edge
-static const Uint8 PONG_BG_ALPHA = 110;     // transparency of the black box (0..255)
-static const int   WIN_SCORE = 15;      // win threshold
+static const Uint8 PONG_BG_ALPHA = 255;     // transparency of the black box (0..255)
+static const int   WIN_SCORE = 10;      // win threshold
 
 // Speeds (slightly slower overall; AI a bit faster than player)
 static const float PONG_PLAYER_SPEED = 420.f;
 static const float PONG_AI_SPEED = 460.f;   // faster AI
 static const float BALL_START_VX = 380.f;   // was 420
 static const float BALL_START_VY = 240.f;   // was 260
-static const float BALL_MAX_SPEED = 1200.f;
+static const float BALL_MAX_SPEED = 1100.f;
 
 // --- Fireworks helpers (boxed inside frame) ---
 static void pongSpawnFireworksBursts(const SDL_Rect& frame) {
@@ -2673,22 +2923,55 @@ void renderFractalZoom(SDL_Renderer* ren, float dt, float scale)
 
 void updateInterference(float dt)
 {
-    // Smoothly wrap phases using the helper wrapf to avoid visible jumps
-    interPhaseA = wrapf(interPhaseA + dt * 0.35f, 2.f * PI);
-    interPhaseB = wrapf(interPhaseB + dt * 0.23f, 2.f * PI);
+    // Skydda mot spikes (alt-tab, state-byte, etc.)
+    if (dt > 0.05f) dt = 0.05f;
 
-    const float cx = SCREEN_WIDTH * 0.5f;
-    const float cy = SCREEN_HEIGHT * 0.5f;
+    // Global tid – finns redan hos dig sedan tidigare
+    I_time += dt;
 
-    // uppdatera mjuk bana + lätt pulserande radie
-    for (auto& c : interferenceCircles) {
-        const float ax = (c.white ? interPhaseA : interPhaseB);
-        const float ay = (c.white ? interPhaseB : interPhaseA);
+    // Sömlös loop-period (sekunder). Ändra om du vill snabbare/långsammare loop.
+    const float PERIOD = 50.0f;
 
-        c.x = cx + cosf(ax) * (SCREEN_WIDTH * 0.35f);
-        c.y = cy + sinf(ay) * (SCREEN_HEIGHT * 0.27f);
+    // Normaliserad tid 0..1 (wrap), så t=0 och t=1 ger samma läge
+    float tnorm = fmodf(I_time, PERIOD) / PERIOD;
 
-        c.r = 140.f + 40.f * (c.white ? sinf(ax * 0.7f) : cosf(ay * 0.6f));
+    // Små hjälp-funktioner utan std::
+    auto minf = [](float a, float b) { return (a < b) ? a : b; };
+    auto maxf = [](float a, float b) { return (a > b) ? a : b; };
+
+    // Säkerställ att vi inte går utanför någon av vektorerna
+    const size_t nC = interferenceCircles.size();
+    const size_t nP = I_params.size();
+    const size_t n = (nC < nP) ? nC : nP;
+    if (n == 0) return;
+
+    for (size_t i = 0; i < n; ++i) {
+        InterferenceCircle& c = interferenceCircles[i];
+        const InterfParam& p = I_params[i];
+
+        // Sömlösa faser: heltals-cykler per PERIOD gör att vi hamnar exakt där vi började
+        float angX = 2.f * PI * (float)p.kx * tnorm + p.phx;
+        float angY = 2.f * PI * (float)p.ky * tnorm + p.phy;
+
+        // Position – flyg över nästan hela skärmen (amplitud ax/ay satta i init)
+        c.x = SCREEN_WIDTH * 0.5f + p.ax * sinf(angX);
+        c.y = SCREEN_HEIGHT * 0.5f + p.ay * sinf(angY);
+
+        // Andning i radie – mjuk (0..1..0) via cos, fasväxla varannan cirkel
+        float breathe = 0.5f * (1.f - cosf(2.f * PI * tnorm)); // 0..1..0
+        float b = (i % 2 == 0) ? breathe : (1.f - breathe);
+        c.r = p.baseR + p.ampR * b;
+
+        // (Valfritt) håll helt inom skärm-kanten: krymp radien nära kanter
+        float maxR = minf(minf(c.x, (float)SCREEN_WIDTH - c.x),
+            minf(c.y, (float)SCREEN_HEIGHT - c.y));
+        if (maxR < c.r * 0.95f) {
+            c.r = maxf(10.f, maxR * 0.95f);
+        }
+
+        // dx/dy används inte längre för läget (vi sätter x/y direkt),
+        // men nollställ om du vill undvika sidåterverkningar:
+        c.dx = 0.f; c.dy = 0.f;
     }
 }
 
@@ -3040,8 +3323,8 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
             WF_FlyT += deltaTime;
             float t = clampValue(WF_FlyT / WF_FlyDur, 0.f, 1.f);
             float e = easeOutCubic(t);
-            flyDist = 2.f + 62.f * e;                // skjut inåt skärmen
-            aPlasma = (Uint8)(230 * (1.f - e));      // fadda plasma
+            flyDist = 2.f + 82.f * e;                // skjut inåt skärmen
+            aPlasma = (Uint8)(255 * (1.f - e));      // fadda plasma
             aLines = (Uint8)(WF_LINE_ALPHA * (1.f - e));
             if (t >= 1.f) {
                 WF_FlyOut = false; WF_FlyT = 0.f;
@@ -3189,12 +3472,14 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
             F_FlyT += deltaTime;
             float t = clampValue(F_FlyT / F_FlyDur, 0.f, 1.f);
             float s = 1.f - easeOutCubic(t);
-            renderFractalZoom(ren, deltaTime, s);
+            renderFractalZoom(renderer, deltaTime);
+
             usedGL = true;
             if (t >= 1.f) { F_FlyOut = false; F_FlyT = 0.f; startStarTransition((currentEffectIndex + 1) % NUM_EFFECTS); }
         } else {
             renderFractalZoom(ren, deltaTime, 1.f);
             usedGL = true;
+
         }
         break;
 
@@ -3210,11 +3495,22 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
 
 
     case VIEW_C64PRINT_NEW: {
-        renderC64PRINT_NEW(ren, menuFont ? menuFont : titleFont, deltaTime, SCREEN_WIDTH, SCREEN_HEIGHT);
+        static bool inited = false;
+
+        if (!inited) {
+            c64pnHardReset(SCREEN_WIDTH, SCREEN_HEIGHT); // eller c64pnStart(...)
+            inited = true;
+        }
+
+        // OBS! Använd samma renderer-variabel som i din signatur
+        renderC64PRINT_NEW(renderer, menuFont ? menuFont : titleFont, deltaTime, SCREEN_WIDTH, SCREEN_HEIGHT);
+
         if (c64PRINT_NEW_isDone()) {
+            inited = false; // så nästa gång vi kommer hit görs reset igen
             int idx = (currentEffectIndex + 1) % NUM_EFFECTS;
             startStarTransition(idx);
         }
+        usedGL = false; // denna effekt ritar via SDL, inte GL
         break;
     }
 
@@ -3482,38 +3778,47 @@ void renderC64Window(int screenW, int screenH) {
         int x = (screenW - w) / 2;
         int y = (screenH - h) / 2;
         TTF_Font* f = consoleFont ? consoleFont : menuFont;
-        SDL_Color col{120,255,120,255};
+        SDL_Color col{ 120,255,120,255 };
+
         auto drawLine = [&](const char* s, int line) {
             if (SDL_Texture* t = renderText(renderer, f, s, col)) {
                 int tw, th; SDL_QueryTexture(t, nullptr, nullptr, &tw, &th);
                 int dx = x + 20;
                 int dy = y + 20 + line * (th + 4);
-                glDrawSDLTextureOverlay(t, dx, dy, tw, th, screenW, screenH);
+                SDL_Rect dst = { dx, dy, tw, th };
+                SDL_RenderCopy(renderer, t, nullptr, &dst);
                 SDL_DestroyTexture(t);
             }
-        };
+            };
 
-        float t = C64BootT;
-        drawLine("**** COMMODORE 64 BASIC V2 ****", 0);
-        drawLine("64K RAM SYSTEM  38911 BASIC BYTES FREE", 1);
-        drawLine("READY.", 2);
+        // C64 bootskärm + READY
+        drawLine("*** COMMODORE 64 BASIC V2 ***", 0);
+        drawLine("64K RAM SYSTEM  38911 BASIC BYTES FREE", 2);
+        drawLine("READY.", 4);
 
-        if (t > C64BootDelay) {
-            int maxChars = (int)(sizeof(C64CodeLine) - 1);
-            int chars = std::min<int>((t - C64BootDelay) * C64TypeSpeed, maxChars);
+        // Använd en lokal alias för tid
+        const float tt = C64PN.t;  // eller C64PN.total om du vill använda total-tid
+
+        // Skriv rad med programkod efter en liten delay
+        if (tt > C64BootDelay) {
+            const int maxChars = int(sizeof(C64CodeLine) - 1);
+            const int chars = std::min<int>(int((tt - C64BootDelay) * C64TypeSpeed), maxChars);
             std::string code(C64CodeLine, chars);
-            drawLine(code.c_str(), 4);
+            drawLine(code.c_str(), 5);
         }
-        float startRun = C64BootDelay + (sizeof(C64CodeLine)-1)/C64TypeSpeed + C64RunDelay;
-        if (t > startRun) {
-            int maxChars = (int)(sizeof(C64RunLine) - 1);
-            int chars = std::min<int>((t - startRun) * C64TypeSpeed, maxChars);
+
+        // Skriv "RUN" efter att koden är färdig + ytterligare delay
+        const float startRun = C64BootDelay + (sizeof(C64CodeLine) - 1) / C64TypeSpeed + C64RunDelay;
+        if (tt > startRun) {
+            const int maxChars = int(sizeof(C64RunLine) - 1);
+            const int chars = std::min<int>(int((tt - startRun) * C64TypeSpeed), maxChars);
             std::string runStr(C64RunLine, chars);
-            drawLine(runStr.c_str(), 5);
+            drawLine(runStr.c_str(), 6);
         }
     }
 }
-#endif // old C64 implementation
+
+// --- C64PrintNew state ---
 
 
 int main(int argc, char* argv[]) {
@@ -3539,11 +3844,14 @@ int main(int argc, char* argv[]) {
 
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
 
-    SDL_SetHint(SDL_HINT_RENDER_DRIVER, "opengl");
+    // SDL_SetHint(SDL_HINT_RENDER_DRIVER, "opengl");
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0"); // nearest
+
 
     // --- Skapa fönster ---
     SDL_Window* window = SDL_CreateWindow("title",
@@ -3558,10 +3866,9 @@ int main(int argc, char* argv[]) {
 
     // --- Skapa GL-context (exakt en gång) ---
     SDL_GLContext glctx = SDL_GL_CreateContext(window);
-    if (!glctx) {
-        std::cerr << "SDL_GL_CreateContext Error: " << SDL_GetError() << "\n";
-        return 1;
-    }
+    if (!glctx) { /* ... */ }
+
+    SDL_GL_MakeCurrent(window, glctx);  // <-- gör contextet aktivt
 
     // Koppla till globala pekarna du definierade högst upp i filen
     gWindow = window;
@@ -3751,7 +4058,6 @@ int main(int argc, char* argv[]) {
             SDL_Rect full = { 0,0,SCREEN_WIDTH,SCREEN_HEIGHT };
             SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-            SDL_RenderFlush(renderer);
             renderFireworks(renderer, deltaTime);
             SDL_RenderPresent(renderer);
 
@@ -3771,11 +4077,11 @@ int main(int argc, char* argv[]) {
                     running = false;
                 }
             }
+
             continue;
         }
 
         if (currentState == STATE_MENU) {
-
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             SDL_SetRenderDrawColor(renderer, 10, 10, 30, 255);
             SDL_RenderClear(renderer);
@@ -3784,7 +4090,6 @@ int main(int argc, char* argv[]) {
             renderStars(renderer, bigStars, { 255,255,255,255 });
             renderStaticStars(renderer);
             renderAboutC64Typewriter(renderer, deltaTime);
-
             renderMenu(deltaTime, mouseX, mouseY, mouseClick);
 
             SDL_Texture* title = renderText(renderer,
@@ -3819,7 +4124,7 @@ int main(int argc, char* argv[]) {
             SDL_Color bc = hov ? SDL_Color{ 255,180,100,255 } : SDL_Color{ 200,200,200,255 };
             SDL_Texture* btnTex = renderText(renderer, menuFont, "Back", bc);
             SDL_Rect bDst = backButtonRect;
-            bDst.y -= static_cast<int>(6.f * backHoverAnim);   // cast
+            bDst.y -= static_cast<int>(6.f * backHoverAnim);
             SDL_RenderCopy(renderer, btnTex, nullptr, &bDst);
             SDL_DestroyTexture(btnTex);
 
@@ -3828,57 +4133,104 @@ int main(int argc, char* argv[]) {
             }
         }
         else if (currentState == STATE_PORTFOLIO) {
+            usedGLThisFrame = false; // vi presenterar via SDL i slutet
+            // 1) Rensa
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-            SDL_SetRenderDrawColor(renderer, 10, 10, 10, 0);
+            SDL_SetRenderDrawColor(renderer, 10, 10, 10, 255);
             SDL_RenderClear(renderer);
 
+            // --- HITTESTA KNAPPAR FÖRST (responsivt UI under fraktal) ---
+            SDL_Point mp{ mouseX, mouseY };
+            bool hovBack = SDL_PointInRect(&mp, &backButtonRect);
+            bool hovNext = SDL_PointInRect(&mp, &nextButtonRect);
+            bool hovQuit = SDL_PointInRect(&mp, &quitButtonRect);
+
+            if (hovBack && !backWasHovered && hoverSound) { Mix_PlayChannel(-1, hoverSound, 0); backWasHovered = true; }
+            else if (!hovBack) backWasHovered = false;
+
+            if (hovNext && !nextWasHovered && hoverSound) { Mix_PlayChannel(-1, hoverSound, 0); nextWasHovered = true; }
+            else if (!hovNext) nextWasHovered = false;
+
+            if (hovQuit && !quitWasHovered && hoverSound) { Mix_PlayChannel(-1, hoverSound, 0); quitWasHovered = true; }
+            else if (!hovQuit) quitWasHovered = false;
+
+            backHoverAnim += (hovBack ? 1.f : -1.f) * deltaTime * 6.f; backHoverAnim = clampValue(backHoverAnim, 0.f, 1.f);
+            nextHoverAnim += (hovNext ? 1.f : -1.f) * deltaTime * 6.f; nextHoverAnim = clampValue(nextHoverAnim, 0.f, 1.f);
+            quitHoverAnim += (hovQuit ? 1.f : -1.f) * deltaTime * 6.f; quitHoverAnim = clampValue(quitHoverAnim, 0.f, 1.f);
+
+            // Flagga för att hoppa fraktalen i just denna frame om vi precis klickade
+            bool transitionJustTriggered = false;
+
+            // --- KLICKADE KNAPPAR? Starta transition DIREKT ---
+            if (mouseClick && !starTransition) {
+                if (hovBack) {
+                    int idx = (currentEffectIndex - 1 + NUM_EFFECTS) % NUM_EFFECTS;
+                    startStarTransition(idx);
+                    transitionJustTriggered = true;
+                }
+                else if (hovNext) {
+                    if (currentPortfolioSubState == VIEW_FRACTAL_ZOOM) {
+                        // Gå vidare direkt från fraktalen
+                        int idx = (currentEffectIndex + 1) % NUM_EFFECTS;
+                        startStarTransition(idx);
+                        transitionJustTriggered = true;
+                    }
+                    else if (currentPortfolioSubState == VIEW_WIREFRAME_CUBE) {
+                        if (!WF_FlyOut) { WF_FlyOut = true; WF_FlyT = 0.f; }
+                    }
+                    else if (currentPortfolioSubState == VIEW_INTERFERENCE) {
+                        if (!I_FlyOut) { I_FlyOut = true; I_FlyT = 0.f; }
+                    }
+                    else {
+                        int idx = (currentEffectIndex + 1) % NUM_EFFECTS;
+                        startStarTransition(idx);
+                        transitionJustTriggered = true;
+                    }
+                }
+                else if (hovQuit) {
+                    startStarTransition(currentEffectIndex, true); // till meny
+                    transitionJustTriggered = true;
+                }
+            }
+
+            // 2) Innehåll
+            if (!starTransition) {
+                if (currentPortfolioSubState == VIEW_FRACTAL_ZOOM) {
+                    if (!transitionJustTriggered) {
+                        // RITA FRAKTAL I GL, BLITTA TILL SDL, MEN PRESENTERA VIA SDL
+                        ensureGLContextCurrent();                 // GL aktivt
+                        renderFractalZoom(renderer, deltaTime);   // exakt EN frame, ingen intern while
+                        ensureFractalTexture(renderer, SCREEN_WIDTH, SCREEN_HEIGHT);
+                        glFlush();
+                        blitGLToSDLTexture(gFractalTex, SCREEN_WIDTH, SCREEN_HEIGHT);
+                        SDL_Rect full = { 0,0,SCREEN_WIDTH,SCREEN_HEIGHT };
+                        SDL_RenderCopy(renderer, gFractalTex, nullptr, &full);
+                    }
+                    else {
+                        // Vi trigga transition: låt bakgrunden vara mörk denna frame
+                        SDL_SetRenderDrawColor(renderer, 5, 5, 8, 255);
+                        SDL_RenderFillRect(renderer, nullptr);
+                    }
+                    usedGLThisFrame = false; // presenterar via SDL
+                }
+                else {
+                    // Icke-fraktal: rita som vanligt (SDL)
+                    renderPortfolioEffect(renderer, deltaTime);
+                    usedGLThisFrame = false;
+                }
+            }
+            else {
+                // Under starTransition – ingen fraktal/effekt
+                usedGLThisFrame = false;
+            }
+
+            // 3) Stjärnor ovanpå
             renderStars(renderer, smallStars, { 180,180,255,255 });
             renderStars(renderer, bigStars, { 255,255,255,255 });
             renderStaticStars(renderer);
 
-            SDL_RenderFlush(renderer);
-
-            if (!starTransition) {
-                renderPortfolioEffect(renderer, deltaTime);
-                usedGLThisFrame = (currentPortfolioSubState == VIEW_FRACTAL_ZOOM ||
-                                   currentPortfolioSubState == VIEW_C64PRINT_NEW ||
-                                   currentPortfolioSubState == VIEW_WIREFRAME_CUBE);
-            }
-
+            // 4) Knappar (SDL) – ritas sist
             if (currentPortfolioSubState != VIEW_C64PRINT_NEW) {
-                SDL_Point mp{ mouseX, mouseY };
-                bool hovBack = SDL_PointInRect(&mp, &backButtonRect);
-                bool hovNext = SDL_PointInRect(&mp, &nextButtonRect);
-                bool hovQuit = SDL_PointInRect(&mp, &quitButtonRect);
-
-                if (hovBack && !backWasHovered && hoverSound) {
-                    Mix_PlayChannel(-1, hoverSound, 0);
-                    backWasHovered = true;
-                } else if (!hovBack) {
-                    backWasHovered = false;
-                }
-
-                if (hovNext && !nextWasHovered && hoverSound) {
-                    Mix_PlayChannel(-1, hoverSound, 0);
-                    nextWasHovered = true;
-                } else if (!hovNext) {
-                    nextWasHovered = false;
-                }
-
-                if (hovQuit && !quitWasHovered && hoverSound) {
-                    Mix_PlayChannel(-1, hoverSound, 0);
-                    quitWasHovered = true;
-                } else if (!hovQuit) {
-                    quitWasHovered = false;
-                }
-
-                backHoverAnim += (hovBack ? 1.f : -1.f) * deltaTime * 6.f;
-                backHoverAnim = clampValue(backHoverAnim, 0.f, 1.f);
-                nextHoverAnim += (hovNext ? 1.f : -1.f) * deltaTime * 6.f;
-                nextHoverAnim = clampValue(nextHoverAnim, 0.f, 1.f);
-                quitHoverAnim += (hovQuit ? 1.f : -1.f) * deltaTime * 6.f;
-                quitHoverAnim = clampValue(quitHoverAnim, 0.f, 1.f);
-
                 SDL_Color bc = hovBack ? kMonoGreenHover : kMonoGreenBase;
                 SDL_Color sc = hovNext ? kMonoGreenHover : kMonoGreenBase;
                 SDL_Color qc = hovQuit ? kMonoGreenHover : kMonoGreenBase;
@@ -3895,47 +4247,29 @@ int main(int argc, char* argv[]) {
                 SDL_RenderCopy(renderer, nextTex, nullptr, &ndst);
                 SDL_RenderCopy(renderer, quitTex, nullptr, &qdst);
 
-                applyDotMask(renderer, bdst);
-                applyScanlines(renderer, bdst, 2);
-                applyDotMask(renderer, ndst);
-                applyScanlines(renderer, ndst, 2);
-                applyDotMask(renderer, qdst);
-                applyScanlines(renderer, qdst, 2);
+                applyDotMask(renderer, bdst); applyScanlines(renderer, bdst, 2);
+                applyDotMask(renderer, ndst); applyScanlines(renderer, ndst, 2);
+                applyDotMask(renderer, qdst); applyScanlines(renderer, qdst, 2);
 
                 SDL_DestroyTexture(backTex);
                 SDL_DestroyTexture(nextTex);
                 SDL_DestroyTexture(quitTex);
-
-                if (mouseClick && hovBack && !starTransition) {
-                    int idx = (currentEffectIndex - 1 + NUM_EFFECTS) % NUM_EFFECTS;
-                    startStarTransition(idx);
-                } else if (mouseClick && hovNext && !starTransition) {
-                    if (currentPortfolioSubState == VIEW_WIREFRAME_CUBE) {
-                        if (!WF_FlyOut) { WF_FlyOut = true; WF_FlyT = 0.f; }
-                    } else if (currentPortfolioSubState == VIEW_FRACTAL_ZOOM) {
-                        if (!F_FlyOut) { F_FlyOut = true; F_FlyT = 0.f; }
-                    } else if (currentPortfolioSubState == VIEW_INTERFERENCE) {
-                        if (!I_FlyOut) { I_FlyOut = true; I_FlyT = 0.f; }
-                    } else {
-                        int idx = (currentEffectIndex + 1) % NUM_EFFECTS;
-                        startStarTransition(idx);
-                    }
-                } else if (mouseClick && hovQuit && !starTransition) {
-                    startStarTransition(currentEffectIndex, true);
-                }
             }
         }
 
-        SDL_RenderFlush(renderer);
+
+        // ---- GEMENSAM PRESENT/SWAP FÖR ALLA STATE ----
         if (usedGLThisFrame) {
-            ensureGLContextCurrent();
+            ensureGLContextCurrent();   // eller SDL_GL_MakeCurrent(window, glctx);
             glFlush();
             SDL_GL_SwapWindow(window);
         }
         else {
-            SDL_RenderPresent(renderer);
+            SDL_RenderPresent(renderer); // SDL är snabbare när du inte använder GL i framen
         }
     }
+
+	// --- Avsluta programmet ---
 
     Mix_HaltMusic();
     if (backgroundMusic) Mix_FreeMusic(backgroundMusic);
