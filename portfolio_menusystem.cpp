@@ -273,28 +273,66 @@ static void c64pnDrawTyping(SDL_Renderer* r, TTF_Font* font) {
     }
 }
 
+static inline void fillRect(SDL_Renderer* r, int x,int y,int w,int h, SDL_Color c){
+    SDL_SetRenderDrawColor(r, c.r,c.g,c.b,c.a);
+    SDL_Rect rc{ x,y,w,h };
+    SDL_RenderFillRect(r, &rc);
+}
+
+static void drawPETSCIIDiagCell(SDL_Renderer* r,
+                                int x, int y,
+                                bool backslash,
+                                int px,
+                                int thickness,
+                                SDL_Color fg,
+                                SDL_Color bg)
+{
+    fillRect(r, x, y, 8*px, 8*px, bg);
+
+    SDL_SetRenderDrawColor(r, fg.r, fg.g, fg.b, fg.a);
+    for (int row = 0; row < 8; ++row) {
+        int col = backslash ? row : (7 - row);
+        for (int t = 0; t < thickness; ++t) {
+            int cx = col + t; if (cx > 7) break;
+            SDL_Rect p{ x + cx*px, y + row*px, px, px };
+            SDL_RenderFillRect(r, &p);
+        }
+    }
+}
+
 static void c64pnDrawPattern(SDL_Renderer* r) {
     c64pnFillRect(r, C64PN.inner, C64PN.backCol);
 
-    SDL_SetRenderDrawColor(r, C64PN.textCol.r, C64PN.textCol.g, C64PN.textCol.b, 255);
+    int px = std::max(1, std::min(C64PN.inner.w / (C64PN.COLS * 8), C64PN.inner.h / (C64PN.ROWS * 8)));
+    int cell = 8 * px;
+    int w = C64PN.COLS * cell;
+    int h = C64PN.ROWS * cell;
+    int startX = C64PN.inner.x + (C64PN.inner.w - w) / 2;
+    int startY = C64PN.inner.y + (C64PN.inner.h - h) / 2;
+
     for (int row = 0; row < C64PN.ROWS; ++row) {
         for (int col = 0; col < C64PN.COLS; ++col) {
             const int idx = row * C64PN.COLS + col;
-            const auto& cell = C64PN.grid[idx];
-            if (!cell.drawn) continue;
+            const auto& cellInfo = C64PN.grid[idx];
+            if (!cellInfo.drawn) continue;
 
-            int x0 = C64PN.inner.x + col * C64PN.cellW;
-            int y0 = C64PN.inner.y + row * C64PN.cellH;
-            int x1 = x0 + C64PN.cellW - 1;
-            int y1 = y0 + C64PN.cellH - 1;
-
-            if (cell.d == 1) {
-                SDL_RenderDrawLine(r, x0, y0, x1, y1); // "\\"
-            } else {
-                SDL_RenderDrawLine(r, x0, y1, x1, y0); // "/"
-            }
+            bool backslash = (cellInfo.d == 1);
+            drawPETSCIIDiagCell(r,
+                                startX + col * cell,
+                                startY + row * cell,
+                                backslash,
+                                px,
+                                2,
+                                C64PN.textCol,
+                                C64PN.backCol);
         }
     }
+
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    int bandH = h / 10;
+    SDL_Color band = {0,0,0,55};
+    fillRect(r, startX, startY + (h - bandH) / 2, w, bandH, band);
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
 }
 
 void updateFireworks(float dt);
