@@ -3503,6 +3503,9 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
             inited = true;
         }
 
+        for (int i = 0; i < 2; ++i) { // rendera två gånger för att få bättre textur
+            c64pnUpdate(deltaTime);
+		}
         // OBS! Använd samma renderer-variabel som i din signatur
         renderC64PRINT_NEW(renderer, menuFont ? menuFont : titleFont, deltaTime, SCREEN_WIDTH, SCREEN_HEIGHT);
 
