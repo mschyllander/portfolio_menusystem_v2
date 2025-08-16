@@ -276,8 +276,9 @@ struct C64PrintNew {
 
     // Fireworks hook (tie into your existing system):
     bool startedFireworks = false;
+};
 
-} C64PN;
+static C64PrintNew C64PN{};
 
 void renderFireworks(SDL_Renderer* renderer, float dt);
 
@@ -398,10 +399,10 @@ static void c64pnUpdate(float dt) {
         } break;
 
         case C64PrintNew::FIREWORKS: {
-            // kick off your existing fireworks system once
+            // kick off fireworks one time when entering this phase
             if (!C64PN.startedFireworks) {
                 C64PN.startedFireworks = true;
-                // If you already have an "exitExplosion" flag / reset, toggle it here
+                startExitExplosion(false, false, 0);
             }
             if (C64PN.t >= C64PN.fireworksDur) {
                 C64PN.phase = C64PrintNew::DONE; C64PN.t = 0.f; C64PN.done = true;
@@ -453,7 +454,7 @@ static void c64pnDrawTyping(SDL_Renderer* r, TTF_Font* font) {
     std::string line = C64PN.typedLine;
     c64pnDrawText(r, font, line.c_str(), C64PN.textCol, x, y);
     if (C64PN.cursorOn) {
-        int approxW = (int)line.size() * (C64PN.cellW * 0.6f);
+        int approxW = static_cast<int>(line.size() * (C64PN.cellW * 0.6f));
         SDL_Rect cur{ x + approxW + 2, y + C64PN.cellH/2, C64PN.cellW/2, C64PN.cellH/6 };
         c64pnFillRect(r, cur, C64PN.textCol);
     }
@@ -785,6 +786,9 @@ static float interPhaseA = 0.f, interPhaseB = 0.f;
 static bool  WF_FlyOut = false;
 static float WF_FlyT = 0.f;
 static float WF_FlyDur = 1.2f; // längd på fly-out i sekunder
+static bool  ET_FlyOut = false;
+static float ET_FlyT = 0.f;
+static const float ET_FlyDur = 1.2f;
 static bool  F_FlyOut = false;
 static float F_FlyT = 0.f;
 static const float F_FlyDur = 0.2f;
@@ -965,8 +969,9 @@ static void buildMorphRing(int k0, int k1, float t, int samples, float rad, floa
 enum AppState { STATE_MENU, STATE_PORTFOLIO, STATE_ABOUT };
 enum PortfolioSubState : int {
     VIEW_WIREFRAME_CUBE = 0,
+    VIEW_ETHANOL_MOLECULE,
     VIEW_PLASMA,
-    VIEW_FRACTAL_ZOOM,    
+    VIEW_FRACTAL_ZOOM,
     VIEW_INTERFERENCE,
     VIEW_SNAKE_GAME,
     VIEW_PONG_GAME,
@@ -1368,6 +1373,7 @@ PortfolioSubState currentPortfolioSubState = VIEW_WIREFRAME_CUBE;
 // Sequence configuration for the portfolio showcase
 const PortfolioSubState effectSequence[] = {
     VIEW_WIREFRAME_CUBE,
+    VIEW_ETHANOL_MOLECULE,
     VIEW_FRACTAL_ZOOM,
     VIEW_SNAKE_GAME,
     VIEW_PONG_GAME,
@@ -1393,12 +1399,16 @@ void startBackgroundMusic() {
 void startPortfolioEffect(PortfolioSubState st) {
     currentPortfolioSubState = st;
     effectTimer = 0.f;
-    WF_FlyOut = F_FlyOut = I_FlyOut = false;
-    WF_FlyT = F_FlyT = I_FlyT = 0.f;
+    WF_FlyOut = ET_FlyOut = F_FlyOut = I_FlyOut = false;
+    WF_FlyT = ET_FlyT = F_FlyT = I_FlyT = 0.f;
 
     switch (st) {
 
     case VIEW_WIREFRAME_CUBE: {
+        effectTimer = 0.f;
+        break;
+    }
+    case VIEW_ETHANOL_MOLECULE: {
         effectTimer = 0.f;
         break;
     }
@@ -1835,6 +1845,34 @@ void renderSolidCubeGL(float ax, float ay, float time) {
     glDisable(GL_CULL_FACE);
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_LIGHTING);
+    glPopMatrix();
+}
+
+static void renderEthanolMoleculeGL(float ax, float ay) {
+    glLoadIdentity();
+    glPushMatrix();
+    glDisable(GL_DEPTH_TEST);
+    glTranslatef(0.f, 0.f, -5.f);
+    glRotatef(ax * 57.2958f, 1.f, 0.f, 0.f);
+    glRotatef(ay * 57.2958f, 0.f, 1.f, 0.f);
+    glDisable(GL_LIGHTING);
+    glDisable(GL_TEXTURE_2D);
+
+    glBegin(GL_LINES);
+    glColor3ub(200,200,200);
+    glVertex3f(0.f,0.f,0.f); glVertex3f(1.f,0.f,0.f);
+    glVertex3f(1.f,0.f,0.f); glVertex3f(2.f,0.f,0.f);
+    glEnd();
+
+    glPointSize(8.f);
+    glBegin(GL_POINTS);
+    glColor3ub(50,50,50); glVertex3f(0.f,0.f,0.f);
+    glColor3ub(50,50,50); glVertex3f(1.f,0.f,0.f);
+    glColor3ub(255,0,0);  glVertex3f(2.f,0.f,0.f);
+    glEnd();
+    glPointSize(1.f);
+
+    glEnable(GL_DEPTH_TEST);
     glPopMatrix();
 }
 
@@ -3270,11 +3308,10 @@ void startExitExplosion(bool returnToMenu, bool nextEffect, int nextIndex)
         for (int i = 0; i < count; ++i) {
             float ang = (rand() / (float)RAND_MAX) * 2.f * PI;
             float spd = speedBase + static_cast<float>(rand() % 300);
-
-            fireworks.push_back({ x, y, cosf(ang) * spd, sinf(ang) * spd, 5.5f, col });
-
+            float life = 5.5f + static_cast<float>(rand() % 100) / 50.f;
+            fireworks.push_back({ x, y, cosf(ang) * spd, sinf(ang) * spd, life, col });
         }
-        };
+    };
 
     if (!returnToMenu && !nextEffect) {
         // big central burst when exiting from menu
@@ -3444,7 +3481,34 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
         break;
     }
 
-    
+    case VIEW_ETHANOL_MOLECULE: {
+        renderStars(ren, smallStars, { 180,180,255,255 });
+        renderStars(ren, bigStars, { 255,255,255,255 });
+        renderStaticStars(ren);
+
+        float flyDist = 3.f;
+        if (ET_FlyOut) {
+            ET_FlyT += deltaTime;
+            float t = clampValue(ET_FlyT / ET_FlyDur, 0.f, 1.f);
+            float e = easeOutCubic(t);
+            flyDist = 3.f + 80.f * e;
+            if (t >= 1.f) {
+                ET_FlyOut = false; ET_FlyT = 0.f;
+                currentEffectIndex = (currentEffectIndex + 1) % NUM_EFFECTS;
+                startPortfolioEffect(effectSequence[currentEffectIndex]);
+                return usedGL;
+            }
+        }
+
+        ensureGLContextCurrent();
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
+        glTranslatef(0.f, 0.f, -flyDist);
+        renderEthanolMoleculeGL(cubeAngleX, cubeAngleY);
+        usedGL = true;
+        break;
+    }
+
     case VIEW_INTERFERENCE:
         updateInterference(deltaTime);
         if (I_FlyOut) {
@@ -4179,6 +4243,9 @@ int main(int argc, char* argv[]) {
                     }
                     else if (currentPortfolioSubState == VIEW_WIREFRAME_CUBE) {
                         if (!WF_FlyOut) { WF_FlyOut = true; WF_FlyT = 0.f; }
+                    }
+                    else if (currentPortfolioSubState == VIEW_ETHANOL_MOLECULE) {
+                        if (!ET_FlyOut) { ET_FlyOut = true; ET_FlyT = 0.f; }
                     }
                     else if (currentPortfolioSubState == VIEW_INTERFERENCE) {
                         if (!I_FlyOut) { I_FlyOut = true; I_FlyT = 0.f; }
