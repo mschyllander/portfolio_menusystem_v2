@@ -415,14 +415,22 @@ static void c64pnUpdate(float dt) {
 }
 
 
+static const SDL_Color fallbackPal[16] = {
+    {233,236,231,255},{  2,  2,  2,255},{238,213,173,255},{156,155,153,255},
+    {146,114,  9,255},{212,115,237,255},{220,179,165,255},{213,157, 43,255},
+    {183,238,241,255},{ 84, 82,219,255},{150,142,113,255},{207,160, 92,255},
+    {197,170,235,255},{188,171,222,255},{165,216,164,255},{205,106, 98,255}
+};
+
 static void c64pnDrawRasterBars(SDL_Renderer* r, const SDL_Rect& zone, float t) {
-    // Simple moving horizontal bars to sell the “decompression” vibe
+    // Cycle through C64 palette colours to emulate raster effects
     int barH = 8;
+    int offset = static_cast<int>(t * 20) % 16;
     for (int y = 0; y < zone.h; y += barH) {
-        float phase = fmodf((y * 0.04f + t * 6.0f), 6.28318f);
-        Uint8 v = (Uint8)(120 + 100 * (0.5f + 0.5f * sinf(phase)));
-        SDL_SetRenderDrawColor(r, v/3, v, 255, 255);
-        SDL_Rect b{ zone.x, zone.y + y, zone.w, barH-1 };
+        int idx = (y / barH + offset) % 16;
+        SDL_Color c = fallbackPal[idx];
+        SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
+        SDL_Rect b{ zone.x, zone.y + y, zone.w, barH - 1 };
         SDL_RenderFillRect(r, &b);
     }
 }
