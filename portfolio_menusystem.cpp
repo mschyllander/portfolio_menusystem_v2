@@ -797,7 +797,6 @@ static float I_FlyT = 0.f;
 static const float I_FlyDur = 1.2f;
 static float MENU_BASE_SCALE = 1.6f;   // större menytext
 static float I_time = 0.f;          // kontinuerlig tid för interference
-static const float I_LOOP = 6.0f;   // sekunder per loop (justera)
 
 
 GLuint mandelbrotShader = 0;
@@ -891,8 +890,6 @@ const int PONG_VMARGIN = 150;
 const int PONGGAME_MARGIN = 650;
 const int PONGGAME_VMARGIN = 280;
 static float gLastDt = 1.0f / 60.0f;  // used by the wrapper pong game
-
-const float FRACTAL_ZOOM_SPEED = 0.01f; // speed multiplier for fractal zoom
 
 // Plasma polygon settings
 const float SHAPE_DURATION = 10.0f;
@@ -1025,7 +1022,6 @@ static void renderPrismSidesWithTexture(SDL_Renderer* ren, SDL_Texture* tex,
 
 static const SDL_Color kMonoGreenBase  = {120, 220, 120, 255};
 static const SDL_Color kMonoGreenHover = {170, 255, 170, 255};
-static const SDL_Color kCRTTint        = {30, 80, 30, 255};
 
 bool renderPortfolioEffect(SDL_Renderer*, float deltaTime);
 void renderAboutC64Typewriter(SDL_Renderer* ren, float dt);
@@ -1113,9 +1109,7 @@ struct C64WindowState {
     float scale = 1.0f;            // 1.0 = winWidth används direkt
 
     // OpenGL
-    GLuint prog = 0;
-    GLuint vao = 0, vbo = 0;
-    GLuint randTex = 0;
+    // removed unused GL placeholders
 } C64;
 
 
@@ -1380,7 +1374,6 @@ const PortfolioSubState effectSequence[] = {
     VIEW_INTERFERENCE,
     VIEW_C64PRINT_NEW,
 };
-const float effectDurations[] = { 10.f, 10.f, 10.f, 10.f, 10.f, 10.f, 10.f };
 const int NUM_EFFECTS = sizeof(effectSequence) / sizeof(effectSequence[0]);
 int currentEffectIndex = 0;
 float effectTimer = 0.f;
@@ -2347,7 +2340,6 @@ static std::vector<FireworkParticle> pongFireworks; // local fireworks just for 
 
 // Layout & tuning
 static const int   PONG_PADDLE_INSET = 14;      // distance from frame edge
-static const Uint8 PONG_BG_ALPHA = 255;     // transparency of the black box (0..255)
 static const int   WIN_SCORE = 10;      // win threshold
 
 // Speeds (slightly slower overall; AI a bit faster than player)
@@ -3292,10 +3284,6 @@ void renderAboutC64Typewriter(SDL_Renderer* ren, float dt) {
         SDL_RenderFillRect(ren, &cur);
     }
 
-    int areaY = SCREEN_HEIGHT / 2 - 340;
-    int areaH = int(outLines.size()) * (lineH + 6);
-    SDL_Rect aboutArea{ startX, areaY, maxWidth, areaH };
-
 }
 
 
@@ -3649,8 +3637,7 @@ static void renderPrismSidesWithTexture(SDL_Renderer* ren, SDL_Texture* tex,
     int sides, float ax, float ay, const SDL_Rect& panel, Uint8 alpha)
 {
     const float half = 1.f, rad = 1.5f;
-    const int OFFSET_X = 200;                // flytta höger
-  
+
     // Förprojektera och samla sidor
     struct Face {
         SDL_Point p0, p1, p2, p3;  // screen
@@ -3887,7 +3874,7 @@ void renderC64Window(int screenW, int screenH) {
 // --- C64PrintNew state ---
 
 
-int main(int argc, char* argv[]) {
+int main() {
     srand((unsigned)time(nullptr));
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) {
