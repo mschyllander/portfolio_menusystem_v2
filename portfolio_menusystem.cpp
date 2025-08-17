@@ -1850,6 +1850,26 @@ void renderSolidCubeGL(float ax, float ay, float time) {
 }
 
 static void renderEthanolMoleculeGL(float ax, float ay) {
+    struct Atom { float x, y, z; Uint8 r, g, b; };
+    static const Atom atoms[] = {
+        { 0.0f,  0.0f,  0.0f,  80, 80, 80 },   // C1
+        { 1.5f,  0.0f,  0.0f,  80, 80, 80 },   // C2
+        { 3.0f,  0.4f,  0.0f, 255,  0,  0 },   // O
+        { -0.7f,  0.9f,  0.0f, 255,255,255 },  // H's around first carbon
+        { -0.7f, -0.9f,  0.3f, 255,255,255 },
+        { -0.7f, -0.9f, -0.3f, 255,255,255 },
+        { 2.2f,  0.9f,  0.0f, 255,255,255 },   // H's around second carbon
+        { 2.2f, -0.9f,  0.3f, 255,255,255 },
+        { 2.2f, -0.9f, -0.3f, 255,255,255 },
+        { 3.6f,  1.0f,  0.0f, 255,255,255 },   // Hydroxyl hydrogen
+    };
+    static const int bonds[][2] = {
+        {0,1}, {1,2},       // Carbon chain + oxygen
+        {0,3}, {0,4}, {0,5},
+        {1,6}, {1,7}, {1,8},
+        {2,9}
+    };
+
     glLoadIdentity();
     glPushMatrix();
     glDisable(GL_DEPTH_TEST);
@@ -1860,16 +1880,21 @@ static void renderEthanolMoleculeGL(float ax, float ay) {
     glDisable(GL_TEXTURE_2D);
 
     glBegin(GL_LINES);
-    glColor3ub(200,200,200);
-    glVertex3f(0.f,0.f,0.f); glVertex3f(1.f,0.f,0.f);
-    glVertex3f(1.f,0.f,0.f); glVertex3f(2.f,0.f,0.f);
+    glColor3ub(200, 200, 200);
+    for (const auto& b : bonds) {
+        const Atom& a = atoms[b[0]];
+        const Atom& b2 = atoms[b[1]];
+        glVertex3f(a.x, a.y, a.z);
+        glVertex3f(b2.x, b2.y, b2.z);
+    }
     glEnd();
 
     glPointSize(8.f);
     glBegin(GL_POINTS);
-    glColor3ub(50,50,50); glVertex3f(0.f,0.f,0.f);
-    glColor3ub(50,50,50); glVertex3f(1.f,0.f,0.f);
-    glColor3ub(255,0,0);  glVertex3f(2.f,0.f,0.f);
+    for (const Atom& a : atoms) {
+        glColor3ub(a.r, a.g, a.b);
+        glVertex3f(a.x, a.y, a.z);
+    }
     glEnd();
     glPointSize(1.f);
 
@@ -3490,9 +3515,7 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
             flyDist = 3.f + 80.f * e;
             if (t >= 1.f) {
                 ET_FlyOut = false; ET_FlyT = 0.f;
-                currentEffectIndex = (currentEffectIndex + 1) % NUM_EFFECTS;
-                startPortfolioEffect(effectSequence[currentEffectIndex]);
-                return usedGL;
+                startStarTransition((currentEffectIndex + 1) % NUM_EFFECTS);
             }
         }
 
