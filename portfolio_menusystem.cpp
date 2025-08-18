@@ -804,7 +804,7 @@ GLuint mandelbrotShader = 0;
 GLuint mandelbrotVAO = 0;
 GLuint mandelbrotVBO = 0;
 
-void renderFractalZoom(SDL_Renderer* ren, float dt, float scale = 1.0f);
+void renderFractalZoom(SDL_Renderer* ren, float dt, float scale = 1.0f); // scale relative to Pong window
 
 // --- GL->SDL blit helpers ---
 static SDL_Texture* gGLTex = nullptr;
@@ -2944,14 +2944,15 @@ void renderFractalZoom(SDL_Renderer* ren, float dt, float scale)
         return t * t * (3.f - 2.f * t);
         };
 
-    // --- Viewport vi ritar Mandelbrot i ---
-    const int baseW = SCREEN_WIDTH, baseH = SCREEN_HEIGHT;
+    // --- Viewport vi ritar Mandelbrot i (matchar Pong-fönstret) ---
+    const int baseW = SCREEN_WIDTH - PONGGAME_MARGIN * 2;
+    const int baseH = SCREEN_HEIGHT - PONGGAME_VMARGIN * 2;
     int viewW = int(baseW * scale);
     int viewH = int(baseH * scale);
     if (viewW < 1) viewW = 1;
     if (viewH < 1) viewH = 1;
-    const int viewX = (SCREEN_WIDTH - viewW) / 2;
-    const int viewY = (SCREEN_HEIGHT - viewH) / 2;
+    const int viewX = PONGGAME_MARGIN + (baseW - viewW) / 2;
+    const int viewY = PONGGAME_VMARGIN + (baseH - viewH) / 2;
     const int glY = SCREEN_HEIGHT - viewY - viewH;
 
     // [FIX] aspect som används även i shadern (uv.x *= aspect)
@@ -3010,9 +3011,9 @@ void renderFractalZoom(SDL_Renderer* ren, float dt, float scale)
     glUniform2f(glGetUniformLocation(mandelbrotShader, "uCenter"), (float)animX, (float)animY);
     glUniform2i(glGetUniformLocation(mandelbrotShader, "uResolution"), viewW, viewH);
 
-    int baseIter = 450;
-    int extraIter = (int)(std::max(0.0, std::log10(1.0 / zoom)) * 80.0);
-    int maxIter = std::min(2000, baseIter + extraIter);
+    int baseIter = 600;
+    int extraIter = (int)(std::max(0.0, std::log10(1.0 / zoom)) * 120.0);
+    int maxIter = std::min(4000, baseIter + extraIter);
     glUniform1i(glGetUniformLocation(mandelbrotShader, "uMaxIter"), maxIter);
 
     glBindVertexArray(mandelbrotVAO);
@@ -3630,7 +3631,7 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
             usedGL = true;
             if (t >= 1.f) { F_FlyOut = false; F_FlyT = 0.f; startStarTransition((currentEffectIndex + 1) % NUM_EFFECTS); }
         } else {
-            renderFractalZoom(ren, deltaTime, 1.f);
+            renderFractalZoom(ren, deltaTime);
             usedGL = true;
 
         }
