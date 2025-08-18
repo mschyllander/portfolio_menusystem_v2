@@ -3662,10 +3662,8 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
                 c64ShatterTime = 0.f;
             }
 
-            if (!c64Shatter && c64PRINT_NEW_isDone()) {
-                inited = false;
-                int idx = (currentEffectIndex + 1) % NUM_EFFECTS;
-                startStarTransition(idx);
+            if (!c64Shatter && !c64ShatterRequest && c64PRINT_NEW_isDone()) {
+                c64ShatterRequest = true;  // trigger glass shatter instead of explosion
             }
         }
         usedGL = false;
