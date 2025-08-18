@@ -569,7 +569,6 @@ static const struct { float x, y; } f_targets[FRACTAL_NUM_TARGETS] = {
 
 enum FractalPhase { FRACTAL_FLY, FRACTAL_HOLD };
 static FractalPhase f_phase = FRACTAL_FLY;
-enum C64Phase { C64_FILLING, C64_HOLD, C64_FLY, C64_DONE };
 
 GLuint loadShader(const char* vertexPath, const char* fragmentPath) {
     auto loadFile = [](const char* path) -> std::string {
@@ -1057,7 +1056,7 @@ bool explosionReturnToMenu = false;
 bool explosionAdvanceEffect = false;
 int  explosionNextIndex = 0;
 
-// --- C64 window shatter ---
+// --- C64 shatter effect ---
 struct Shard { SDL_Texture* tex; float x, y, vx, vy, ang, vang; int w, h; };
 static std::vector<Shard> c64Shards;
 static bool c64Shatter = false;
@@ -1089,29 +1088,6 @@ static inline bool intersectY(const SDL_Point& p0, const SDL_Point& p1, int y, f
     return true;
 }
 
-
-
-// C64 program struktur
-
-struct C64WindowState {
-    // Grid
-    int gridW = 42;                // typisk C64-breddkänsla, justera fritt
-    int gridH = 25;
-
-    // Timing
-    C64Phase phase = C64_FILLING;
-    float holdTime = 0.6f;         // kort paus när den är full
-    float holdT = 0.f;
-
-    // Window appearance / transform
-    float winWidth = 0.72f;        // som andel av skärmbredd
-    float alpha = 0.88f;           // bakgrunds-opacity
-    float thickness = 0.085f;      // linjetjocklek i cell (0..1)
-    float scale = 1.0f;            // 1.0 = winWidth används direkt
-
-    // OpenGL
-    // removed unused GL placeholders
-} C64;
 
 
 // === C64 10 PRINT — tiny GL utils ===
@@ -3894,182 +3870,6 @@ static void renderPrismSidesWithTexture(SDL_Renderer* ren, SDL_Texture* tex,
 
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
 }
-
-// --- C64 state ---
-static GLuint C64Prog = 0, C64VAO = 0, C64VBO = 0;
-static int C64GridW = 64, C64GridH = 36;
-static int C64Reveal = 0;
-static float C64Time = 0.f;
-static float C64Decomp = 0.f;           // 0..1
-static bool C64DecompPhase = true;      // visa decrunch först
-static bool C64Done = false;
-static bool C64Boot = false;
-static float C64BootT = 0.f;
-static float C64HoldT = 0.f;                     // time to hold pattern after reveal
-static bool startType = false;
-static float typeDelay = 1.0f;
-
-// Text lines and timing for the boot sequence
-static constexpr char C64CodeLine[] = "10 PRINT CHR$(205.5+RND(1));:GOTO 10";
-static constexpr char C64RunLine[]  = "RUN";
-static constexpr float C64TypeSpeed = 20.f;  // chars per second
-static constexpr float C64BootDelay = 0.5f;  // wait before typing starts
-static constexpr float C64RunDelay  = 0.3f;  // pause before RUN
-static constexpr float C64AfterRunDelay = 0.5f; // pause after RUN before pattern
-static constexpr float C64BootDuration =
-    C64BootDelay + (sizeof(C64CodeLine)-1)/C64TypeSpeed +
-    C64RunDelay  + (sizeof(C64RunLine)-1)/C64TypeSpeed +
-    C64AfterRunDelay;
-static constexpr float C64HoldDuration = 3.0f;   // show finished pattern
-
-// Create GL_R8 random texture of size w x h
-void initC64Window(int screenW, int screenH) {
-    // program
-    C64Prog = makeProgram(c64_vs, c64_fs);
-
-    // fullscreen quad
-    float quad[8] = { -1.f,-1.f,  1.f,-1.f,  -1.f,1.f,  1.f,1.f };
-    glGenVertexArrays(1, &C64VAO);
-    glGenBuffers(1, &C64VBO);
-    glBindVertexArray(C64VAO);
-    glBindBuffer(GL_ARRAY_BUFFER, C64VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(quad), quad, GL_STATIC_DRAW);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
-    glBindVertexArray(0);
-
-    // grid: lite "C64-ish" teckenupplösning
-    C64GridW = 80;  // fler kolumner = tunnare diagonaler
-    C64GridH = 50;
-
-    glDisable(GL_DEPTH_TEST);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-}
-
-void startC64Window() { // resetta för nästa visning om du vill
-    C64Reveal = 0;
-    C64Time = 0.f;
-    C64Decomp = 0.f;
-    C64DecompPhase = true;
-    C64Done = false;
-    C64Boot = false;
-    C64BootT = 0.f;
-    C64HoldT = 0.f;
-}
-
-void updateC64Window(float dt) {
-    C64Time += dt;
-
-    if (C64DecompPhase) {
-
-        const float decompDur = 2.0f;  // a couple of seconds of decrunch
-        C64Decomp = std::min(1.f, C64Time / decompDur);
-        if (C64Decomp >= 1.f) {
-            C64DecompPhase = false;
-            C64Boot = true;
-            C64BootT = 0.f;
-            C64Reveal = 0;
-        }
-    } else if (C64Boot) {
-        C64BootT += dt;
-        if (C64BootT > C64BootDuration) {
-            C64Boot = false;
-        }
-    } else {
-        int total = C64GridW * C64GridH;
-        int add = int(1200.f * dt); // draw the pattern at a readable pace
-        C64Reveal = std::min(total, C64Reveal + add);
-        if (C64Reveal == total) {
-            C64HoldT += dt;
-            if (!startType && C64HoldT >= typeDelay) startType = true;
-            if (C64HoldT >= C64HoldDuration) C64Done = true;
-        }
-    }
-}
-
-void c64RequestFly() { /* valfritt: resetta för ny reveal */ startC64Window(); }
-
-// Renderar allt i en pass: decrunch-bg + panel i mitten
-void renderC64Window(int screenW, int screenH) {
-    glUseProgram(C64Prog);
-
-    // panelstorlek: 60% av höjd, och samma aspect som skärmen
-    float panelH = 0.60f;                       // 60% av höjden
-    float aspect = float(screenW) / float(screenH);
-    float panelW = panelH * aspect;             // så rutan blir rektangulär, inte kvadratisk
-    panelW = std::min(panelW, 0.85f);           // clamp – inte större än 85% bredd
-    // vill du ha mindre: sänk panelH, t.ex. 0.50f
-
-    // center i mitten
-    float cx = 0.5f, cy = 0.5f;
-    GLint loc;
-
-    // uniforms
-    if ((loc = glGetUniformLocation(C64Prog, "uGrid")) != -1) glUniform2i(loc, C64GridW, C64GridH);
-    if ((loc = glGetUniformLocation(C64Prog, "uRevealCount")) != -1) glUniform1i(loc, C64Reveal);
-    if ((loc = glGetUniformLocation(C64Prog, "uThickness")) != -1) glUniform1f(loc, 0.06f);
-    if ((loc = glGetUniformLocation(C64Prog, "uInk")) != -1)  glUniform3f(loc, 0.90f, 0.90f, 0.95f);
-    if ((loc = glGetUniformLocation(C64Prog, "uBG")) != -1)   glUniform3f(loc, 0.09f, 0.20f, 0.85f);  // C64-blå
-    if ((loc = glGetUniformLocation(C64Prog, "uEdge")) != -1) glUniform3f(loc, 0.05f, 0.10f, 0.40f);
-    if ((loc = glGetUniformLocation(C64Prog, "uPanelRect")) != -1) glUniform4f(loc, cx, cy, panelW, panelH);
-    if ((loc = glGetUniformLocation(C64Prog, "uTime")) != -1)  glUniform1f(loc, C64Time);
-    if ((loc = glGetUniformLocation(C64Prog, "uDecomp")) != -1)glUniform1f(loc, C64DecompPhase ? C64Decomp : 1.0f);
-
-    glBindVertexArray(C64VAO);
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    glBindVertexArray(0);
-
-    if (C64Boot) {
-        int w = int(panelW * screenW);
-        int h = int(panelH * screenH);
-        int x = (screenW - w) / 2;
-        int y = (screenH - h) / 2;
-        TTF_Font* f = consoleFont ? consoleFont : menuFont;
-        SDL_Color col{ 120,255,120,255 };
-
-        auto drawLine = [&](const char* s, int line) {
-            if (SDL_Texture* t = renderText(renderer, f, s, col)) {
-                int tw, th; SDL_QueryTexture(t, nullptr, nullptr, &tw, &th);
-                int dx = x + 20;
-                int dy = y + 20 + line * (th + 4);
-                SDL_Rect dst = { dx, dy, tw, th };
-                SDL_RenderCopy(renderer, t, nullptr, &dst);
-                SDL_DestroyTexture(t);
-            }
-            };
-
-        // C64 bootskärm + READY
-        drawLine("*** COMMODORE 64 BASIC V2 ***", 0);
-        drawLine("64K RAM SYSTEM  38911 BASIC BYTES FREE", 2);
-        drawLine("READY.", 4);
-
-        // Använd en lokal alias för tid
-        const float tt = C64PN.t;  // eller C64PN.total om du vill använda total-tid
-
-        if (startType) {
-            // Skriv rad med programkod efter en liten delay
-            if (tt > C64BootDelay) {
-                const int maxChars = int(sizeof(C64CodeLine) - 1);
-                const int chars = std::min<int>(int((tt - C64BootDelay) * C64TypeSpeed), maxChars);
-                std::string code(C64CodeLine, chars);
-                drawLine(code.c_str(), 5);
-            }
-
-            // Skriv "RUN" efter att koden är färdig + ytterligare delay
-            const float startRun = C64BootDelay + (sizeof(C64CodeLine) - 1) / C64TypeSpeed + C64RunDelay;
-            if (tt > startRun) {
-                const int maxChars = int(sizeof(C64RunLine) - 1);
-                const int chars = std::min<int>(int((tt - startRun) * C64TypeSpeed), maxChars);
-                std::string runStr(C64RunLine, chars);
-                drawLine(runStr.c_str(), 6);
-            }
-        }
-    }
-}
-
-// --- C64PrintNew state ---
-
 
 int main() {
     srand((unsigned)time(nullptr));
