@@ -269,7 +269,7 @@ struct C64PrintNew {
     SDL_Color borderCol = {  0,  0,130,255}; // dark blue border
     SDL_Color backCol   = {128,200,255,255}; // light blue screen
     SDL_Color textCol   = { 64, 64,160,255}; // darker blue text
-    SDL_Color cursorCol = {255,255,255,255}; // white cursor
+    SDL_Color cursorCol = {236,240,255,255}; // bluish-white cursor
 
     // Screen geometry (computed on start)
     SDL_Rect outer;     // full “C64 monitor” rect
@@ -369,7 +369,9 @@ static void c64pnUpdate(float dt) {
             if ((int)C64PN.typedLine.size() == (int)C64PN.toType.size()) {
                 // brief pause, then pretend user hits ENTER and RUN
                 if (C64PN.t > 0.25f) {
-                    C64PN.phase = C64PrintNew::RUNNING; C64PN.t = 0.f;
+                    C64PN.phase = C64PrintNew::RUNNING;
+                    C64PN.t = 0.f;
+                    C64PN.cursorOn = false; // hide cursor when pattern starts
                     c64pnResetGrid();
                 }
             }
@@ -430,7 +432,11 @@ static void c64pnDrawBootText(SDL_Renderer* r, TTF_Font* font) {
 
     // blinking cursor after READY.
     if (C64PN.cursorOn) {
-        SDL_Rect cur{ x + 6 * C64PN.cellW, y + C64PN.cellH/2, C64PN.cellW/2, C64PN.cellH/6 };
+        int readyW = 0, readyH = 0;
+        TTF_SizeText(font, l3, &readyW, &readyH);
+        int cw = 0, ch = 0;
+        TTF_SizeText(font, "M", &cw, &ch);
+        SDL_Rect cur{ x + readyW, y, cw, ch };
         c64pnFillRect(r, cur, C64PN.cursorCol);
     }
 }
@@ -442,8 +448,11 @@ static void c64pnDrawTyping(SDL_Renderer* r, TTF_Font* font) {
     std::string line = C64PN.typedLine;
     c64pnDrawText(r, font, line.c_str(), C64PN.textCol, x, y);
     if (C64PN.cursorOn) {
-        int approxW = static_cast<int>(line.size() * (C64PN.cellW * 0.6f));
-        SDL_Rect cur{ x + approxW + 2, y + C64PN.cellH/2, C64PN.cellW/2, C64PN.cellH/6 };
+        int textW = 0, textH = 0;
+        TTF_SizeText(font, line.c_str(), &textW, &textH);
+        int cw = 0, ch = 0;
+        TTF_SizeText(font, "M", &cw, &ch);
+        SDL_Rect cur{ x + textW, y, cw, ch };
         c64pnFillRect(r, cur, C64PN.cursorCol);
     }
 }
@@ -3367,8 +3376,8 @@ void renderAboutC64Typewriter(SDL_Renderer* ren, float dt) {
     if (showCursor) {
         int chW, chH;
         TTF_SizeText(f, "M", &chW, &chH);
-        SDL_Rect cur{ cursorX + 4, cursorY + chH - (chH - 4), chW / 2, chH - 6 };
-        SDL_SetRenderDrawColor(ren, 255, 255, 255, 255); // white cursor
+        SDL_Rect cur{ cursorX, cursorY, chW, chH };
+        SDL_SetRenderDrawColor(ren, 236, 240, 255, 255); // bluish-white cursor
         SDL_RenderFillRect(ren, &cur);
     }
 
