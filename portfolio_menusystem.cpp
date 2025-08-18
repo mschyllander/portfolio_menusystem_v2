@@ -432,11 +432,15 @@ static void c64pnDrawBootText(SDL_Renderer* r, TTF_Font* font) {
 
     // blinking cursor after READY.
     if (C64PN.cursorOn) {
+
         int readyW = 0, readyH = 0;
         TTF_SizeText(font, l3, &readyW, &readyH);
         int cw = 0, ch = 0;
         TTF_SizeText(font, "M", &cw, &ch);
         SDL_Rect cur{ x + readyW, y, cw, ch };
+
+        int cw = static_cast<int>(C64PN.cellW * 0.6f);
+        SDL_Rect cur{ x + 6 * C64PN.cellW, y, cw, C64PN.cellH };
         c64pnFillRect(r, cur, C64PN.cursorCol);
     }
 }
@@ -448,11 +452,17 @@ static void c64pnDrawTyping(SDL_Renderer* r, TTF_Font* font) {
     std::string line = C64PN.typedLine;
     c64pnDrawText(r, font, line.c_str(), C64PN.textCol, x, y);
     if (C64PN.cursorOn) {
+
         int textW = 0, textH = 0;
         TTF_SizeText(font, line.c_str(), &textW, &textH);
         int cw = 0, ch = 0;
         TTF_SizeText(font, "M", &cw, &ch);
         SDL_Rect cur{ x + textW, y, cw, ch };
+
+        int approxW = static_cast<int>(line.size() * (C64PN.cellW * 0.6f));
+        int cw = static_cast<int>(C64PN.cellW * 0.6f);
+        SDL_Rect cur{ x + approxW, y, cw, C64PN.cellH };
+
         c64pnFillRect(r, cur, C64PN.cursorCol);
     }
 }
