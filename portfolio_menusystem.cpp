@@ -731,7 +731,7 @@ static SDL_Texture* getScanlineTex(SDL_Renderer* ren) {
     if (SDL_LockTexture(tex, nullptr, &p, &pitch) == 0) {
         SDL_PixelFormat* fmt = SDL_AllocFormat(SDL_PIXELFORMAT_ARGB8888);
         auto px = reinterpret_cast<Uint32*>(p);
-        px[0] = SDL_MapRGBA(fmt, 0, 0, 0, 110); // dark line (alpha)
+        px[0] = SDL_MapRGBA(fmt, 0, 0, 0, 180); // darker line for more visible scanline
         px[1] = SDL_MapRGBA(fmt, 0, 0, 0, 0); // empty line
         SDL_UnlockTexture(tex);
         SDL_FreeFormat(fmt);
@@ -2889,7 +2889,7 @@ void renderFractalZoom(SDL_Renderer* ren, float dt, float scale)
     // Slower, smoother flight into the set
     const float  flyTime = 2.4f;
     const float  holdTime = 0.6f;
-    const double zoomFactorPerFly = 0.12;  // gentler zoom per step
+    const double zoomFactorPerFly = 0.5;  // smoother, less aggressive zoom per step
     const double minZoom = 1e-6;           // avoid excessive iterations
 
 
@@ -2931,7 +2931,7 @@ void renderFractalZoom(SDL_Renderer* ren, float dt, float scale)
         };
 
     // --- Viewport vi ritar Mandelbrot i ---
-    const int baseW = 800, baseH = 600;
+    const int baseW = SCREEN_WIDTH, baseH = SCREEN_HEIGHT;
     int viewW = int(baseW * scale);
     int viewH = int(baseH * scale);
     if (viewW < 1) viewW = 1;
@@ -2960,14 +2960,14 @@ void renderFractalZoom(SDL_Renderer* ren, float dt, float scale)
         if (phaseTime >= holdTime) {
             ++currentTarget;
             if (currentTarget >= numTargets) {
-                firstRun = true;
-                glUseProgram(0);
-                startStarTransition((currentEffectIndex + 1) % NUM_EFFECTS);
-                return;
+                currentTarget = numTargets - 1; // stay at final target
+                startX = centerX;  startY = centerY;
+                targetX = centerX; targetY = centerY; // continue zooming at same spot
+            } else {
+                startX = centerX;  startY = centerY;
+                targetX = targets[currentTarget].x;
+                targetY = targets[currentTarget].y;
             }
-            startX = centerX;  startY = centerY;
-            targetX = targets[currentTarget].x;
-            targetY = targets[currentTarget].y;
 
             startZoom = zoom;
             endZoom = std::max(minZoom, startZoom * zoomFactorPerFly);
@@ -2996,7 +2996,9 @@ void renderFractalZoom(SDL_Renderer* ren, float dt, float scale)
     glUniform2f(glGetUniformLocation(mandelbrotShader, "uCenter"), (float)animX, (float)animY);
     glUniform2i(glGetUniformLocation(mandelbrotShader, "uResolution"), viewW, viewH);
 
-    int maxIter = 450; // lighter on the GPU
+    int baseIter = 450;
+    int extraIter = (int)(std::max(0.0, std::log10(1.0 / zoom)) * 80.0);
+    int maxIter = std::min(2000, baseIter + extraIter);
     glUniform1i(glGetUniformLocation(mandelbrotShader, "uMaxIter"), maxIter);
 
     glBindVertexArray(mandelbrotVAO);
