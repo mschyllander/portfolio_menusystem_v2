@@ -244,14 +244,14 @@ struct C64PrintNew {
     // Timing
     float t = 0.f;                 // stage timer
     float total = 0.f;             // total time, if you want to tweak transitions
-    float decompressDur = 2.4f;
+    float decompressDur = 5.4f;
     float bootscrDur    = 1.1f;
-    float typingSpeed   = 55.f;    // chars/sec while "typing"
-    float runDrawSpeed  = 850.f;   // cells/sec while drawing 10-PRINT pattern
+    float typingSpeed   = 2.f;    // chars/sec while "typing"
+    float runDrawSpeed  = 250.f;   // cells/sec while drawing 10-PRINT pattern
     float runHoldMin    = 5.0f;    // minimum seconds to keep drawing
 
     // Typing simulation
-    std::string toType = "10 PRINT CHR$(205.5+RND(1));:GOTO 10";
+    std::string toType = "10 PRINT CHR$(205.5+RND(1));:GOTO 10  ";
     std::string typedLine;
     float typedCount = 0.f;
     bool  cursorOn   = true;
@@ -282,12 +282,6 @@ struct C64PrintNew {
 };
 
 static C64PrintNew C64PN{};
-
-void renderFireworks(SDL_Renderer* renderer, float dt);
-
-
-// Global senaste dt (du har redan denna):
-extern float gLastDt;
 
 static inline void c64pnFillRect(SDL_Renderer* r, const SDL_Rect& rc, SDL_Color c) {
     SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
@@ -3971,7 +3965,7 @@ int main() {
     if (menuFont) TTF_SetFontStyle(menuFont, TTF_STYLE_BOLD);
     if (bigFont)  TTF_SetFontStyle(bigFont, TTF_STYLE_BOLD);
     hoverSound = Mix_LoadWAV("hover.wav");
-    bangSound = Mix_LoadWAV("bang.wav");
+    bangSound = Mix_LoadWAV("break.wav");
 
     // Init “plasma”-textur och blandningsläge
     gPlasma = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
