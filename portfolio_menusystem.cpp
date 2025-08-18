@@ -216,8 +216,8 @@ void main(){
     // Linjemask (sätt uThickness ~ 0.12 från CPU)
     float lineMask = smoothstep(uThickness, 0.12, d);
 
-    // Subtila scanlines i panelen
-    float scan = 1.0 - 0.06 * (0.5 + 0.5 * sin(puv.y * 1200.0));
+    // Mer distinkta scanlines i panelen
+    float scan = 1.0 - 0.15 * (0.5 + 0.5 * sin(puv.y * 1200.0));
 
     // Slutfärg
     vec3 finalCol = mix(panelCol, uInk, lineMask) * scan;
@@ -242,8 +242,8 @@ static inline void ensureGLContextCurrent() {
 static constexpr SDL_Color C64_WHITE = { 233,236,231,255 }; // "C64-vit" (Pepto/Colodore-lik)
 static float CRT_TEXT_ROW_DARKEN = 0.85f;  // var 0.65 – mindre nedtoning av varannan textrad
 static Uint8 CRT_DOT_OFF = 235;           // var 170 – svagare dotmask (mindre mörkning)
-static Uint8 CRT_SCANLINE_ALPHA_MAIN = 60;   // var 110 – mindre svart i huvudskenan
-static Uint8 CRT_SCANLINE_ALPHA_SECOND = 20; // var 0 – gör även "mellanraden" lite mörk
+static Uint8 CRT_SCANLINE_ALPHA_MAIN = 120;  // mer distinkta scanlines
+static Uint8 CRT_SCANLINE_ALPHA_SECOND = 60; // även mellanraden markeras
 
 
 
@@ -852,7 +852,7 @@ static void blitGLToSDLTexture(SDL_Texture* dst, int w, int h) {
 
 // --- Wireframe settings and helpers ---
 static int  WF_LINE_THICKNESS = 1;    // 0 = inga linjer, 1 = tunnast, 2..n = tjockare
-static Uint8 WF_LINE_ALPHA = 90;  // grund-alfa (0..255) för linjerna
+static Uint8 WF_LINE_ALPHA = 255; // grund-alfa (0..255) för linjerna
 static inline float easeOutCubic(float x) { x = clampValue(x, 0.f, 1.f); return 1.f - powf(1.f - x, 3.f); }
 
 void initFractalZoom() {
@@ -1137,7 +1137,7 @@ static void fillTrianglePlasma(SDL_Renderer* ren, SDL_Point a, SDL_Point b, SDL_
         int x1 = (int)std::floor(xs[1]);
         for (int x = x0; x <= x1; ++x) {
             SDL_Color col = plasmaColor(x, y, time * 6.f);
-            SDL_SetRenderDrawColor(ren, col.r, col.g, col.b, 220);
+            SDL_SetRenderDrawColor(ren, col.r, col.g, col.b, 255);
             SDL_RenderDrawPoint(ren, x, y);
         }
     }
@@ -1179,7 +1179,7 @@ static void fillTrianglePlasmaClipped(SDL_Renderer* ren,
 
         for (int x = x0; x <= x1; ++x) {
             SDL_Color col = plasmaColor(x, y, time * 6.f);
-            SDL_SetRenderDrawColor(ren, col.r, col.g, col.b, 220);
+            SDL_SetRenderDrawColor(ren, col.r, col.g, col.b, 255);
             SDL_RenderDrawPoint(ren, x, y);
         }
     }
@@ -2376,20 +2376,20 @@ void renderSnakeGame(SDL_Renderer* ren) {
         const auto& sSeg = snake[i];
         SDL_Rect r{ startX + sSeg.x * CELL_LOCAL, startY + sSeg.y * CELL_LOCAL, CELL_LOCAL, CELL_LOCAL };
         float t = (i + 1) / (float)snake.size();
-        Uint8 a = Uint8(80 + t * 175);
+        Uint8 a = 255;
         SDL_SetRenderDrawColor(ren, 50, 220, 50, a);
         SDL_RenderFillRect(ren, &r);
     }
 
     // Mat
     SDL_Rect fr{ startX + food.x * CELL_LOCAL, startY + food.y * CELL_LOCAL, CELL_LOCAL, CELL_LOCAL };
-    SDL_SetRenderDrawColor(ren, 220, 50, 50, 230);
+    SDL_SetRenderDrawColor(ren, 220, 50, 50, 255);
     SDL_RenderFillRect(ren, &fr);
 
     // Titel + poäng
     TTF_Font* smallFont = consoleFont ? consoleFont : menuFont;
 
-    if (SDL_Texture* t = renderText(ren, smallFont, "Worms", { 255,255,255,220 })) {
+    if (SDL_Texture* t = renderText(ren, smallFont, "Worms", { 255,255,255,255 })) {
         int w, h; SDL_QueryTexture(t, nullptr, nullptr, &w, &h);
         SDL_Rect dst = { (SCREEN_WIDTH - w) / 2, startY - h - 5, w, h };
         SDL_RenderCopy(ren, t, nullptr, &dst);
@@ -2397,7 +2397,7 @@ void renderSnakeGame(SDL_Renderer* ren) {
     }
     {
         std::string scoreStr = "Score: " + std::to_string(snakeScore) + "/" + std::to_string(WORM_MAX_SCORE);
-        if (SDL_Texture* sc = renderText(ren, smallFont, scoreStr, { 200,255,200,220 })) {
+        if (SDL_Texture* sc = renderText(ren, smallFont, scoreStr, { 200,255,200,255 })) {
             int w, h; SDL_QueryTexture(sc, nullptr, nullptr, &w, &h);
             SDL_Rect dst = { startX, startY - h - 5, w, h };
             SDL_RenderCopy(ren, sc, nullptr, &dst);
@@ -2409,7 +2409,7 @@ void renderSnakeGame(SDL_Renderer* ren) {
     if (snakeExploded) {
         Uint8 flash = (Uint8)(255.0f * std::fabs(std::sin(snakeExplodeTimer * 18.f)));
         SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(ren, flash, flash, flash, 95); // svagare, bara i panelen
+        SDL_SetRenderDrawColor(ren, flash, flash, flash, 255);
         SDL_RenderFillRect(ren, &bg);
 
         // WIN/LOSE-meddelande inne i panelen
@@ -3440,13 +3440,9 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
     switch (currentPortfolioSubState) {
 
     case VIEW_WIREFRAME_CUBE: {
-        renderStars(ren, smallStars, { 180,180,255,255 });
-        renderStars(ren, bigStars, { 255,255,255,255 });
-        renderStaticStars(ren);
-
         // --- fly-out progress & parametrar ---
         float flyDist = 2.8f;               // normal dist i projectPointPanel
-        Uint8 aPlasma = static_cast<Uint8>(230);
+        Uint8 aPlasma = static_cast<Uint8>(255);
         Uint8 aLines = WF_LINE_ALPHA;
 
         if (WF_FlyOut) {
@@ -3867,13 +3863,13 @@ static void renderPrismSidesWithTexture(SDL_Renderer* ren, SDL_Texture* tex,
             };
 
         // två trianglar per sida
-        setV(v[0], (float)f.p0.x, (float)f.p0.y, f.u0, 0.f, 230);
-        setV(v[1], (float)f.p1.x, (float)f.p1.y, f.u1, 0.f, 230);
-        setV(v[2], (float)f.p2.x, (float)f.p2.y, f.u1, 1.f, 230);
+        setV(v[0], (float)f.p0.x, (float)f.p0.y, f.u0, 0.f, 255);
+        setV(v[1], (float)f.p1.x, (float)f.p1.y, f.u1, 0.f, 255);
+        setV(v[2], (float)f.p2.x, (float)f.p2.y, f.u1, 1.f, 255);
 
-        setV(v[3], (float)f.p0.x, (float)f.p0.y, f.u0, 0.f, 230);
-        setV(v[4], (float)f.p2.x, (float)f.p2.y, f.u1, 1.f, 230);
-        setV(v[5], (float)f.p3.x, (float)f.p3.y, f.u0, 1.f, 230);
+        setV(v[3], (float)f.p0.x, (float)f.p0.y, f.u0, 0.f, 255);
+        setV(v[4], (float)f.p2.x, (float)f.p2.y, f.u1, 1.f, 255);
+        setV(v[5], (float)f.p3.x, (float)f.p3.y, f.u0, 1.f, 255);
 
         SDL_RenderGeometry(ren, tex, v, 6, nullptr, 0);
     }
@@ -4145,10 +4141,10 @@ int main() {
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             SDL_SetRenderDrawColor(renderer, 10, 10, 30, 255);
             SDL_RenderClear(renderer);
-            renderLogoWithReflection(renderer, logoTexture, 300);
-            renderStars(renderer, smallStars, { 180,180,255,220 });
+            renderStars(renderer, smallStars, { 180,180,255,255 });
             renderStars(renderer, bigStars, { 255,255,255,255 });
             renderStaticStars(renderer);
+            renderLogoWithReflection(renderer, logoTexture, 300);
             renderAboutC64Typewriter(renderer, deltaTime);
             renderMenu(deltaTime, mouseX, mouseY, mouseClick);
 
@@ -4165,7 +4161,7 @@ int main() {
         else if (currentState == STATE_ABOUT) {
             SDL_SetRenderDrawColor(renderer, 10, 10, 30, 255);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-            renderStars(renderer, smallStars, { 180,180,255,220 });
+            renderStars(renderer, smallStars, { 180,180,255,255 });
             renderStars(renderer, bigStars, { 255,255,255,255 });
             renderStaticStars(renderer);
             renderAboutC64Typewriter(renderer, deltaTime);
@@ -4198,6 +4194,11 @@ int main() {
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             SDL_SetRenderDrawColor(renderer, 10, 10, 10, 255);
             SDL_RenderClear(renderer);
+
+            // Stjärnscroll i bakgrunden
+            renderStars(renderer, smallStars, { 180,180,255,255 });
+            renderStars(renderer, bigStars, { 255,255,255,255 });
+            renderStaticStars(renderer);
 
             // --- HITTESTA KNAPPAR FÖRST (responsivt UI under fraktal) ---
             SDL_Point mp{ mouseX, mouseY };
@@ -4289,11 +4290,6 @@ int main() {
                 // Under starTransition – ingen fraktal/effekt
                 usedGLThisFrame = false;
             }
-
-            // 3) Stjärnor ovanpå
-            renderStars(renderer, smallStars, { 180,180,255,255 });
-            renderStars(renderer, bigStars, { 255,255,255,255 });
-            renderStaticStars(renderer);
 
             // 4) Knappar (SDL) – ritas sist
             if (currentPortfolioSubState != VIEW_C64PRINT_NEW) {
