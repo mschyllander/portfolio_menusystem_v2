@@ -2997,14 +2997,16 @@ void renderFractalZoom(SDL_Renderer* ren, float dt, float scale)
     double animY = centerY;
 
     SDL_RenderFlush(ren);
+    ensureGLContextCurrent();
     glDisable(GL_DEPTH_TEST);
+
+    glViewport(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+    glClearColor(0.f, 0.f, 0.f, 0.f);
+    glClear(GL_COLOR_BUFFER_BIT);
 
     glEnable(GL_SCISSOR_TEST);
     glScissor(viewX, glY, viewW, viewH);
     glViewport(viewX, glY, viewW, viewH);
-    glClearColor(0.f, 0.f, 0.f, 1.f);
-    glClear(GL_COLOR_BUFFER_BIT);
-    glDisable(GL_SCISSOR_TEST);
 
     // Uniforms
     glUniform1f(glGetUniformLocation(mandelbrotShader, "uZoom"), (float)zoom);
@@ -3027,6 +3029,12 @@ void renderFractalZoom(SDL_Renderer* ren, float dt, float scale)
     glDisable(GL_DEPTH_TEST);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindTexture(GL_TEXTURE_2D, 0);
+
+    ensureGLTexture(ren, SCREEN_WIDTH, SCREEN_HEIGHT);
+    glFlush();
+    blitGLToSDLTexture(gGLTex, SCREEN_WIDTH, SCREEN_HEIGHT);
+    SDL_Rect full{0,0,SCREEN_WIDTH,SCREEN_HEIGHT};
+    SDL_RenderCopy(ren, gGLTex, nullptr, &full);
 }
 
 
@@ -3588,6 +3596,9 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
         }
 
         ensureGLContextCurrent();
+        glViewport(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+        glClearColor(0.f, 0.f, 0.f, 0.f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glMatrixMode(GL_MODELVIEW);
         renderEthanolMoleculeGL(cubeAngleX, cubeAngleY, flyDist);
         ensureGLTexture(ren, SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -3622,14 +3633,16 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
             F_FlyT += deltaTime;
             float t = clampValue(F_FlyT / F_FlyDur, 0.f, 1.f);
             float s = 1.f - easeOutCubic(t);
+            if (s < 0.001f) s = 0.001f;
+            SDL_RenderSetScale(ren, s, s);
+            SDL_Rect vp{ int((1.f - s) * SCREEN_WIDTH / 2 / s), int((1.f - s) * SCREEN_HEIGHT / 2 / s), SCREEN_WIDTH, SCREEN_HEIGHT };
+            SDL_RenderSetViewport(ren, &vp);
             renderFractalZoom(renderer, deltaTime);
-
-            usedGL = true;
+            SDL_RenderSetScale(ren, 1.f, 1.f);
+            SDL_RenderSetViewport(ren, nullptr);
             if (t >= 1.f) { F_FlyOut = false; F_FlyT = 0.f; startStarTransition((currentEffectIndex + 1) % NUM_EFFECTS); }
         } else {
             renderFractalZoom(ren, deltaTime);
-            usedGL = true;
-
         }
         break;
 
