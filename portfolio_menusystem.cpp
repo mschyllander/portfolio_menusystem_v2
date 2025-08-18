@@ -289,11 +289,6 @@ void renderFireworks(SDL_Renderer* renderer, float dt);
 // Global senaste dt (du har redan denna):
 extern float gLastDt;
 
-// Wrappern (placera i .cpp, efter att gLastDt finns)
-inline void renderFireworks(SDL_Renderer* renderer) {
-    renderFireworks(renderer, gLastDt);
-}
-
 static inline void c64pnFillRect(SDL_Renderer* r, const SDL_Rect& rc, SDL_Color c) {
     SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
     SDL_RenderFillRect(r, &rc);
