@@ -1725,6 +1725,7 @@ void renderMenu(float dt, int mX, int mY, bool mClick) {
                         }
                     }
                     SDL_FreeSurface(surf);
+                    if (bangSound) Mix_PlayChannel(-1, bangSound, 0);
                     c64Shatter = true;
                     c64ShatterRequest = false;
                     c64PendingQuit = false;
@@ -3748,6 +3749,7 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
                     }
                 }
                 SDL_FreeSurface(surf);
+                if (bangSound) Mix_PlayChannel(-1, bangSound, 0);
                 c64Shatter = true;
                 c64ShatterRequest = false;
                 c64ShatterTime = 0.f;
