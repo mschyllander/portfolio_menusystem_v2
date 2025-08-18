@@ -238,6 +238,15 @@ static inline void ensureGLContextCurrent() {
     Stages: DECOMPRESS -> BOOTSCR -> TYPING -> RUNNING -> DONE
 ============================================================== */
 
+// --- CRT Tuning ---
+static constexpr SDL_Color C64_WHITE = { 233,236,231,255 }; // "C64-vit" (Pepto/Colodore-lik)
+static float CRT_TEXT_ROW_DARKEN = 0.85f;  // var 0.65 – mindre nedtoning av varannan textrad
+static Uint8 CRT_DOT_OFF = 235;           // var 170 – svagare dotmask (mindre mörkning)
+static Uint8 CRT_SCANLINE_ALPHA_MAIN = 60;   // var 110 – mindre svart i huvudskenan
+static Uint8 CRT_SCANLINE_ALPHA_SECOND = 20; // var 0 – gör även "mellanraden" lite mörk
+
+
+
 struct C64PrintNew {
     enum Phase { DECOMPRESS, BOOTSCR, TYPING, RUNNING, DONE } phase = DECOMPRESS;
 
@@ -266,10 +275,13 @@ struct C64PrintNew {
     float runTime = 0.f; // time spent in RUNNING
 
     // Visual params (approximate C64 colors)
-    SDL_Color borderCol = { 64, 64,255,255}; // light blue border
-    SDL_Color backCol   = {  0,  0,130,255}; // dark blue screen
-    SDL_Color textCol   = { 64, 64,255,255}; // light blue text
-    SDL_Color cursorCol = { 64, 64,255,255}; // cursor matches text
+
+    SDL_Color borderCol = { 0,  0,130,255 };  // mörkblå ram
+    SDL_Color backCol = { 112,180,240,255 };  // ljusblå skärm
+    SDL_Color textCol = { 80, 80,160,255 };  // C64-blå text (inte kritvit)
+    SDL_Color cursorCol = { 64, 64,160,255 };  // cursor samma färg som text
+
+
 
     // Screen geometry (computed on start)
     SDL_Rect outer;     // full “C64 monitor” rect
@@ -651,8 +663,8 @@ static SDL_Texture* getDotMask(SDL_Renderer* ren) {
             Uint32* row = reinterpret_cast<Uint32*>(
                 static_cast<Uint8*>(pixels) + y * pitch);
             for (int x = 0; x < W; ++x) {
-                bool dot = (x == 1 && y == 1);     // mittpunkten “vit”
-                Uint8 v = dot ? 255 : 170;         // runtom lite mörkare
+                bool dot = (x == 1 && y == 1);
+                Uint8 v = dot ? 255 : CRT_DOT_OFF; // 235 default – mindre mörkning
                 row[x] = SDL_MapRGBA(fmt, v, v, v, 255);
             }
         }
@@ -681,12 +693,12 @@ static SDL_Texture* renderTextCRT(SDL_Renderer* ren, TTF_Font* f,
             for (int x = 0; x < w; ++x) {
                 Uint8 r, g, b, a;
                 SDL_GetRGBA(p[y * w + x], fmt, &r, &g, &b, &a);
-                if (a) {                  // bara glyph-pixlar
-                    r = Uint8(r * 0.65f);
-                    g = Uint8(g * 0.65f);
-                    b = Uint8(b * 0.65f);
-                    p[y * w + x] = SDL_MapRGBA(fmt, r, g, b, a);
+                if ((y & 1) == 0) {
+                    r = Uint8(std::min(255.0f, r * CRT_TEXT_ROW_DARKEN));
+                    g = Uint8(std::min(255.0f, g * CRT_TEXT_ROW_DARKEN));
+                    b = Uint8(std::min(255.0f, b * CRT_TEXT_ROW_DARKEN));
                 }
+
             }
         }
     }
@@ -694,6 +706,7 @@ static SDL_Texture* renderTextCRT(SDL_Renderer* ren, TTF_Font* f,
 
     SDL_Texture* tex = SDL_CreateTextureFromSurface(ren, s);
     SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureAlphaMod(tex, 255); // full alpha
     SDL_FreeSurface(s);
     return tex;
 }
@@ -731,8 +744,9 @@ static SDL_Texture* getScanlineTex(SDL_Renderer* ren) {
     if (SDL_LockTexture(tex, nullptr, &p, &pitch) == 0) {
         SDL_PixelFormat* fmt = SDL_AllocFormat(SDL_PIXELFORMAT_ARGB8888);
         auto px = reinterpret_cast<Uint32*>(p);
-        px[0] = SDL_MapRGBA(fmt, 0, 0, 0, 180); // darker line for more visible scanline
-        px[1] = SDL_MapRGBA(fmt, 0, 0, 0, 0); // empty line
+        px[0] = SDL_MapRGBA(fmt, 0, 0, 0, CRT_SCANLINE_ALPHA_MAIN);   // t.ex. 60
+px[1] = SDL_MapRGBA(fmt, 0, 0, 0, CRT_SCANLINE_ALPHA_SECOND); // t.ex. 20 (tidigare 0)
+
         SDL_UnlockTexture(tex);
         SDL_FreeFormat(fmt);
     }
@@ -1890,7 +1904,7 @@ static void renderEthanolMoleculeGL(float ax, float ay, float dist) {
     };
 
     // ---- storlek på atomerna (justera fritt) ----
-    const float ATOM_SCALE = 1.f;  // gör ALLT större snabbt (prova 2.0–3.0)
+    const float ATOM_SCALE = 1.8f;  // gör ALLT större snabbt (prova 2.0–3.0)
     auto atomRadius = [&](int idx)->float {
         if (idx == 2)                return 0.45f * ATOM_SCALE; // O störst
         if (idx == 0 || idx == 1)   return 0.34f * ATOM_SCALE; // C
