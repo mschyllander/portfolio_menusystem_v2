@@ -43,6 +43,8 @@
 
 struct Star;
 
+void startExitExplosion(bool returnToMenu = false, bool nextEffect = false, int nextIndex = 0);
+
 SDL_Window* gWindow = nullptr;
 SDL_GLContext gGL = nullptr;
 
@@ -814,19 +816,19 @@ GLuint mandelbrotVBO = 0;
 void renderFractalZoom(SDL_Renderer* ren, float dt, float scale = 1.0f);
 
 // --- GL->SDL blit helpers ---
-static SDL_Texture* gFractalTex = nullptr;
+static SDL_Texture* gGLTex = nullptr;
 
-static void ensureFractalTexture(SDL_Renderer* r, int w, int h) {
-    if (gFractalTex) {
+static void ensureGLTexture(SDL_Renderer* r, int w, int h) {
+    if (gGLTex) {
         int tw, th;
-        SDL_QueryTexture(gFractalTex, nullptr, nullptr, &tw, &th);
+        SDL_QueryTexture(gGLTex, nullptr, nullptr, &tw, &th);
         if (tw == w && th == h) return;
-        SDL_DestroyTexture(gFractalTex);
-        gFractalTex = nullptr;
+        SDL_DestroyTexture(gGLTex);
+        gGLTex = nullptr;
     }
-    gFractalTex = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888,
+    gGLTex = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888,
         SDL_TEXTUREACCESS_STREAMING, w, h);
-    SDL_SetTextureBlendMode(gFractalTex, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureBlendMode(gGLTex, SDL_BLENDMODE_BLEND);
 }
 
 // Läser backbuffer från GL och stoppar in i en SDL-textur (flippad så den hamnar rätt i SDL)
@@ -1020,7 +1022,6 @@ void updatePongGame(float dt);
 void renderPongGame(SDL_Renderer* ren, float dt);       // main one
 void renderFireworks(SDL_Renderer*, float dt);
 void renderLogoWithReflection(SDL_Renderer*, SDL_Texture*, int baseX);
-void startExitExplosion(bool returnToMenu = false, bool nextEffect = false, int nextIndex = 0);
 void startStarTransition(int newIndex, bool toMenu = false);
 static void drawThickLine(SDL_Renderer* ren, int x1, int y1, int x2, int y2, int t);
 static void drawSmallFilledCircle(SDL_Renderer* ren, int cx, int cy, int radius);
@@ -1884,12 +1885,18 @@ static void renderEthanolMoleculeGL(float ax, float ay) {
     for (const auto& b : bonds) {
         const Atom& a = atoms[b[0]];
         const Atom& b2 = atoms[b[1]];
-        glVertex3f(a.x, a.y, a.z);
-        glVertex3f(b2.x, b2.y, b2.z);
+        float sx = a.x + (b2.x - a.x) * 0.25f;
+        float sy = a.y + (b2.y - a.y) * 0.25f;
+        float sz = a.z + (b2.z - a.z) * 0.25f;
+        float ex = b2.x - (b2.x - a.x) * 0.25f;
+        float ey = b2.y - (b2.y - a.y) * 0.25f;
+        float ez = b2.z - (b2.z - a.z) * 0.25f;
+        glVertex3f(sx, sy, sz);
+        glVertex3f(ex, ey, ez);
     }
     glEnd();
 
-    glPointSize(8.f);
+    glPointSize(16.f);
     glBegin(GL_POINTS);
     for (const Atom& a : atoms) {
         glColor3ub(a.r, a.g, a.b);
@@ -3503,10 +3510,6 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
     }
 
     case VIEW_ETHANOL_MOLECULE: {
-        renderStars(ren, smallStars, { 180,180,255,255 });
-        renderStars(ren, bigStars, { 255,255,255,255 });
-        renderStaticStars(ren);
-
         float flyDist = 3.f;
         if (ET_FlyOut) {
             ET_FlyT += deltaTime;
@@ -3524,7 +3527,11 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
         glLoadIdentity();
         glTranslatef(0.f, 0.f, -flyDist);
         renderEthanolMoleculeGL(cubeAngleX, cubeAngleY);
-        usedGL = true;
+        ensureGLTexture(ren, SCREEN_WIDTH, SCREEN_HEIGHT);
+        glFlush();
+        blitGLToSDLTexture(gGLTex, SCREEN_WIDTH, SCREEN_HEIGHT);
+        SDL_Rect full{0,0,SCREEN_WIDTH,SCREEN_HEIGHT};
+        SDL_RenderCopy(ren, gGLTex, nullptr, &full);
         break;
     }
 
@@ -4287,11 +4294,11 @@ int main() {
                         // RITA FRAKTAL I GL, BLITTA TILL SDL, MEN PRESENTERA VIA SDL
                         ensureGLContextCurrent();                 // GL aktivt
                         renderFractalZoom(renderer, deltaTime);   // exakt EN frame, ingen intern while
-                        ensureFractalTexture(renderer, SCREEN_WIDTH, SCREEN_HEIGHT);
+                        ensureGLTexture(renderer, SCREEN_WIDTH, SCREEN_HEIGHT);
                         glFlush();
-                        blitGLToSDLTexture(gFractalTex, SCREEN_WIDTH, SCREEN_HEIGHT);
+                        blitGLToSDLTexture(gGLTex, SCREEN_WIDTH, SCREEN_HEIGHT);
                         SDL_Rect full = { 0,0,SCREEN_WIDTH,SCREEN_HEIGHT };
-                        SDL_RenderCopy(renderer, gFractalTex, nullptr, &full);
+                        SDL_RenderCopy(renderer, gGLTex, nullptr, &full);
                     }
                     else {
                         // Vi trigga transition: låt bakgrunden vara mörk denna frame
@@ -4301,9 +4308,8 @@ int main() {
                     usedGLThisFrame = false; // presenterar via SDL
                 }
                 else {
-                    // Icke-fraktal: rita som vanligt (SDL)
-                    renderPortfolioEffect(renderer, deltaTime);
-                    usedGLThisFrame = false;
+                    // Rendera övriga effekter (kan använda OpenGL)
+                    usedGLThisFrame = renderPortfolioEffect(renderer, deltaTime);
                 }
             }
             else {
