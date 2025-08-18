@@ -269,6 +269,7 @@ struct C64PrintNew {
     SDL_Color borderCol = {  0,  0,130,255}; // dark blue border
     SDL_Color backCol   = {128,200,255,255}; // light blue screen
     SDL_Color textCol   = { 64, 64,160,255}; // darker blue text
+    SDL_Color cursorCol = {255,255,255,255}; // white cursor
 
     // Screen geometry (computed on start)
     SDL_Rect outer;     // full “C64 monitor” rect
@@ -441,7 +442,7 @@ static void c64pnDrawBootText(SDL_Renderer* r, TTF_Font* font) {
     // blinking cursor after READY.
     if (C64PN.cursorOn) {
         SDL_Rect cur{ x + 6 * C64PN.cellW, y + C64PN.cellH/2, C64PN.cellW/2, C64PN.cellH/6 };
-        c64pnFillRect(r, cur, C64PN.textCol);
+        c64pnFillRect(r, cur, C64PN.cursorCol);
     }
 }
 
@@ -454,7 +455,7 @@ static void c64pnDrawTyping(SDL_Renderer* r, TTF_Font* font) {
     if (C64PN.cursorOn) {
         int approxW = static_cast<int>(line.size() * (C64PN.cellW * 0.6f));
         SDL_Rect cur{ x + approxW + 2, y + C64PN.cellH/2, C64PN.cellW/2, C64PN.cellH/6 };
-        c64pnFillRect(r, cur, C64PN.textCol);
+        c64pnFillRect(r, cur, C64PN.cursorCol);
     }
 }
 
