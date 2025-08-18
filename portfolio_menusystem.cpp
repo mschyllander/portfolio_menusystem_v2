@@ -266,10 +266,10 @@ struct C64PrintNew {
     float runTime = 0.f; // time spent in RUNNING
 
     // Visual params (approximate C64 colors)
-    SDL_Color borderCol = {  0,  0,130,255}; // dark blue border
-    SDL_Color backCol   = {128,200,255,255}; // light blue screen
-    SDL_Color textCol   = { 64, 64,160,255}; // darker blue text
-    SDL_Color cursorCol = {236,240,255,255}; // bluish-white cursor
+    SDL_Color borderCol = { 64, 64,255,255}; // light blue border
+    SDL_Color backCol   = {  0,  0,130,255}; // dark blue screen
+    SDL_Color textCol   = { 64, 64,255,255}; // light blue text
+    SDL_Color cursorCol = { 64, 64,255,255}; // cursor matches text
 
     // Screen geometry (computed on start)
     SDL_Rect outer;     // full “C64 monitor” rect
@@ -283,15 +283,17 @@ struct C64PrintNew {
 
 static C64PrintNew C64PN{};
 
+// Forward declarations for CRT helpers
+static SDL_Texture* renderTextCRT(SDL_Renderer*, TTF_Font*, const std::string&, SDL_Color);
+static void applyDotMask(SDL_Renderer*, const SDL_Rect&);
+static void applyScanlines(SDL_Renderer*, const SDL_Rect&, int scale);
+
 static inline void c64pnFillRect(SDL_Renderer* r, const SDL_Rect& rc, SDL_Color c) {
     SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
     SDL_RenderFillRect(r, &rc);
 }
 static inline void c64pnDrawText(SDL_Renderer* r, TTF_Font* font, const char* s, SDL_Color col, int x, int y) {
-    // Uses your existing text pipeline if you have it; fallback minimal:
-    // If you already have renderText(renderer, font, text, SDL_Color), use that.
-    extern SDL_Texture* renderText(SDL_Renderer*, TTF_Font*, const std::string&, SDL_Color);
-    SDL_Texture* tex = renderText(r, font, s, col);
+    SDL_Texture* tex = renderTextCRT(r, font, s, col);
     if (tex) {
         int tw, th; SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
         SDL_Rect dst{ x, y, tw, th };
@@ -417,7 +419,7 @@ static void c64pnDrawRasterBars(SDL_Renderer* r, const SDL_Rect& zone, float t) 
     }
 }
 
-static void c64pnDrawBootText(SDL_Renderer* r, TTF_Font* font) {
+static void c64pnDrawBootText(SDL_Renderer* r, TTF_Font* font, bool drawCursor = true) {
     const char* l1 = "*** COMMODORE 64 BASIC V2 ***";
     const char* l2 = "64K RAM SYSTEM  38911 BASIC BYTES FREE";
     const char* l3 = "READY.";
@@ -431,7 +433,7 @@ static void c64pnDrawBootText(SDL_Renderer* r, TTF_Font* font) {
     c64pnDrawText(r, font, l3, C64PN.textCol, x, y);
 
     // blinking cursor after READY.
-    if (C64PN.cursorOn) {
+    if (drawCursor && C64PN.cursorOn) {
 
         int readyW = 0, readyH = 0;
         TTF_SizeText(font, l3, &readyW, &readyH);
@@ -443,7 +445,7 @@ static void c64pnDrawBootText(SDL_Renderer* r, TTF_Font* font) {
 }
 
 static void c64pnDrawTyping(SDL_Renderer* r, TTF_Font* font) {
-    c64pnDrawBootText(r, font);
+    c64pnDrawBootText(r, font, false);
     int x = C64PN.inner.x + C64PN.cellW;
     int y = C64PN.inner.y + C64PN.cellH * 7;
     std::string line = C64PN.typedLine;
@@ -516,6 +518,10 @@ static void renderC64PRINT_NEW(SDL_Renderer* renderer, TTF_Font* font, float dt,
         default: {
         } break;
     }
+
+    // CRT overlay
+    applyDotMask(renderer, C64PN.inner);
+    applyScanlines(renderer, C64PN.inner, 2);
 }
 
 static bool c64PRINT_NEW_isDone() {
