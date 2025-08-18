@@ -715,17 +715,6 @@ static void applyDotMask(SDL_Renderer* ren, const SDL_Rect& dst) {
         }
     }
 }
-
-static void applyScanlines(SDL_Renderer* ren, const SDL_Rect& dst) {
-    // tunna, halvtransparenta svarta linjer varannan rad
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(ren, 0, 0, 0, 55);
-    for (int y = dst.y; y < dst.y + dst.h; y += 2) {
-        SDL_RenderDrawLine(ren, dst.x, y, dst.x + dst.w, y);
-    }
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
-}
-
 // 1x2 pattern: dark row + transparent row, tiled vertically
 static SDL_Texture* getScanlineTex(SDL_Renderer* ren) {
     static SDL_Texture* tex = nullptr;
@@ -1755,9 +1744,6 @@ void renderMenu(float dt, int mX, int mY, bool mClick) {
         SDL_RenderCopy(renderer, menuItems[i].texture, nullptr, &dst);
         // ta "dot-isch" + scanlines på knapptxten
         applyDotMask(renderer, dst);
-        //applyScanlines(renderer, dst);
-
-
     }
 }
 
