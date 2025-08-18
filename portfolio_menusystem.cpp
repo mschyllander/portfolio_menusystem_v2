@@ -234,12 +234,12 @@ static inline void ensureGLContextCurrent() {
 }
 
 /**** ===========================================================
-     C64PRINT_NEW — single-file implementation (SDL2 drawing)
-     Stages: DECOMPRESS -> BOOTSCR -> TYPING -> RUNNING -> FIREWORKS -> DONE
+    C64PRINT_NEW — single-file implementation (SDL2 drawing)
+    Stages: DECOMPRESS -> BOOTSCR -> TYPING -> RUNNING -> DONE
 ============================================================== */
 
 struct C64PrintNew {
-    enum Phase { DECOMPRESS, BOOTSCR, TYPING, RUNNING, FIREWORKS, DONE } phase = DECOMPRESS;
+    enum Phase { DECOMPRESS, BOOTSCR, TYPING, RUNNING, DONE } phase = DECOMPRESS;
 
     // Timing
     float t = 0.f;                 // stage timer
@@ -248,8 +248,7 @@ struct C64PrintNew {
     float bootscrDur    = 1.1f;
     float typingSpeed   = 55.f;    // chars/sec while "typing"
     float runDrawSpeed  = 850.f;   // cells/sec while drawing 10-PRINT pattern
-    float runHoldMin    = 5.0f;    // minimum seconds to keep drawing before fireworks
-    float fireworksDur  = 2.2f;
+    float runHoldMin    = 5.0f;    // minimum seconds to keep drawing
 
     // Typing simulation
     std::string toType = "10 PRINT CHR$(205.5+RND(1));:GOTO 10";
@@ -279,9 +278,6 @@ struct C64PrintNew {
     // Control
     bool started = false;
     bool done    = false;
-
-    // Fireworks hook (tie into your existing system):
-    bool startedFireworks = false;
 };
 
 static C64PrintNew C64PN{};
@@ -352,7 +348,6 @@ static void c64pnStart(int screenW, int screenH) {
     c64pnLayout(screenW, screenH);
     c64pnResetGrid();
     C64PN.runTime = 0.f;
-    C64PN.startedFireworks = false;
 }
 
 static void c64pnUpdate(float dt) {
@@ -398,19 +393,8 @@ static void c64pnUpdate(float dt) {
             for (int i = 0; i < add && C64PN.drawnCells < (int)C64PN.grid.size(); ++i) {
                 C64PN.grid[C64PN.drawnCells++].drawn = true;
             }
-            // after min hold, go fireworks
+            // after min hold, mark demo as done
             if (C64PN.runTime >= C64PN.runHoldMin) {
-                C64PN.phase = C64PrintNew::FIREWORKS; C64PN.t = 0.f;
-            }
-        } break;
-
-        case C64PrintNew::FIREWORKS: {
-            // kick off fireworks one time when entering this phase
-            if (!C64PN.startedFireworks) {
-                C64PN.startedFireworks = true;
-                startExitExplosion(false, false, 0);
-            }
-            if (C64PN.t >= C64PN.fireworksDur) {
                 C64PN.phase = C64PrintNew::DONE; C64PN.t = 0.f; C64PN.done = true;
             }
         } break;
@@ -525,12 +509,6 @@ static void renderC64PRINT_NEW(SDL_Renderer* renderer, TTF_Font* font, float dt,
 
         case C64PrintNew::RUNNING: {
             c64pnDrawPattern(renderer);
-        } break;
-
-        case C64PrintNew::FIREWORKS: {
-            c64pnDrawPattern(renderer);
-            renderFireworks(renderer, dt);
-
         } break;
 
         case C64PrintNew::DONE:
@@ -1078,6 +1056,14 @@ float exitTimer = 0.1f;
 bool explosionReturnToMenu = false;
 bool explosionAdvanceEffect = false;
 int  explosionNextIndex = 0;
+
+// --- C64 window shatter ---
+struct Shard { SDL_Rect src; float x, y, vx, vy, ang, vang; };
+static std::vector<Shard> c64Shards;
+static SDL_Texture* c64Snapshot = nullptr;
+static bool c64Shatter = false;
+static bool c64ShatterRequest = false;
+static float c64ShatterTime = 0.f;
 
 
 struct InterferenceCircle { float x, y, r, dx, dy; bool white; };
@@ -1854,7 +1840,7 @@ void renderSolidCubeGL(float ax, float ay, float time) {
     glPopMatrix();
 }
 
-static void renderEthanolMoleculeGL(float ax, float ay) {
+static void renderEthanolMoleculeGL(float ax, float ay, float dist) {
     struct Atom { float x, y, z; Uint8 r, g, b; };
     static const Atom atoms[] = {
         { 0.0f,  0.0f,  0.0f,  80, 80, 80 },   // C1
@@ -1889,7 +1875,7 @@ static void renderEthanolMoleculeGL(float ax, float ay) {
     glEnable(GL_DEPTH_TEST);              // korrekt occlusion
     glDepthFunc(GL_LEQUAL);
 
-    glTranslatef(0.f, 0.f, -5.f);
+    glTranslatef(0.f, 0.f, -dist);
     glRotatef(ax * 57.2958f, 1.f, 0.f, 0.f);
     glRotatef(ay * 57.2958f, 0.f, 1.f, 0.f);
 
@@ -3547,12 +3533,13 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
     }
 
     case VIEW_ETHANOL_MOLECULE: {
-        float flyDist = 3.f;
+        float baseDist = 6.f;
+        float flyDist = baseDist;
         if (ET_FlyOut) {
             ET_FlyT += deltaTime;
             float t = clampValue(ET_FlyT / ET_FlyDur, 0.f, 1.f);
             float e = easeOutCubic(t);
-            flyDist = 3.f + 80.f * e;
+            flyDist = baseDist + 80.f * e;
             if (t >= 1.f) {
                 ET_FlyOut = false; ET_FlyT = 0.f;
                 startStarTransition((currentEffectIndex + 1) % NUM_EFFECTS);
@@ -3561,9 +3548,7 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
 
         ensureGLContextCurrent();
         glMatrixMode(GL_MODELVIEW);
-        glLoadIdentity();
-        glTranslatef(0.f, 0.f, -flyDist);
-        renderEthanolMoleculeGL(cubeAngleX, cubeAngleY);
+        renderEthanolMoleculeGL(cubeAngleX, cubeAngleY, flyDist);
         ensureGLTexture(ren, SCREEN_WIDTH, SCREEN_HEIGHT);
         glFlush();
         blitGLToSDLTexture(gGLTex, SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -3622,22 +3607,68 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
         static bool inited = false;
 
         if (!inited) {
-            c64pnHardReset(SCREEN_WIDTH, SCREEN_HEIGHT); // eller c64pnStart(...)
+            c64pnHardReset(SCREEN_WIDTH, SCREEN_HEIGHT);
             inited = true;
         }
 
-        for (int i = 0; i < 2; ++i) { // rendera två gånger för att få bättre textur
-            c64pnUpdate(deltaTime);
-		}
-        // OBS! Använd samma renderer-variabel som i din signatur
-        renderC64PRINT_NEW(renderer, menuFont ? menuFont : titleFont, deltaTime, SCREEN_WIDTH, SCREEN_HEIGHT);
-
-        if (c64PRINT_NEW_isDone()) {
-            inited = false; // så nästa gång vi kommer hit görs reset igen
-            int idx = (currentEffectIndex + 1) % NUM_EFFECTS;
-            startStarTransition(idx);
+        if (c64Shatter) {
+            c64ShatterTime += deltaTime;
+            for (auto &s : c64Shards) {
+                s.vy += 600.f * deltaTime;
+                s.x += s.vx * deltaTime;
+                s.y += s.vy * deltaTime;
+                s.ang += s.vang * deltaTime;
+                SDL_Rect dst{ int(s.x), int(s.y), s.src.w, s.src.h };
+                SDL_RenderCopyEx(renderer, c64Snapshot, &s.src, &dst, s.ang, nullptr, SDL_FLIP_NONE);
+            }
+            if (c64ShatterTime > 1.2f) {
+                inited = false;
+                int idx = (currentEffectIndex + 1) % NUM_EFFECTS;
+                startStarTransition(idx);
+                c64Shatter = false;
+                c64Shards.clear();
+                if (c64Snapshot) { SDL_DestroyTexture(c64Snapshot); c64Snapshot = nullptr; }
+            }
         }
-        usedGL = false; // denna effekt ritar via SDL, inte GL
+        else {
+            for (int i = 0; i < 2; ++i) { c64pnUpdate(deltaTime); }
+            renderC64PRINT_NEW(renderer, menuFont ? menuFont : titleFont, deltaTime, SCREEN_WIDTH, SCREEN_HEIGHT);
+
+            if (c64ShatterRequest) {
+                SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, C64PN.outer.w, C64PN.outer.h, 32, SDL_PIXELFORMAT_ARGB8888);
+                SDL_RenderReadPixels(renderer, &C64PN.outer, SDL_PIXELFORMAT_ARGB8888, surf->pixels, surf->pitch);
+                c64Snapshot = SDL_CreateTextureFromSurface(renderer, surf);
+                SDL_FreeSurface(surf);
+
+                c64Shards.clear();
+                const int cols = 4, rows = 3;
+                int pw = C64PN.outer.w / cols;
+                int ph = C64PN.outer.h / rows;
+                for (int y = 0; y < rows; ++y) {
+                    for (int x = 0; x < cols; ++x) {
+                        Shard sh;
+                        sh.src = { x*pw, y*ph, pw, ph };
+                        sh.x = float(C64PN.outer.x + sh.src.x);
+                        sh.y = float(C64PN.outer.y + sh.src.y);
+                        sh.vx = float(rand() % 200 - 100);
+                        sh.vy = float(rand() % 200);
+                        sh.ang = 0.f;
+                        sh.vang = float(rand() % 400 - 200);
+                        c64Shards.push_back(sh);
+                    }
+                }
+                c64Shatter = true;
+                c64ShatterRequest = false;
+                c64ShatterTime = 0.f;
+            }
+
+            if (!c64Shatter && c64PRINT_NEW_isDone()) {
+                inited = false;
+                int idx = (currentEffectIndex + 1) % NUM_EFFECTS;
+                startStarTransition(idx);
+            }
+        }
+        usedGL = false;
         break;
     }
 
@@ -4311,6 +4342,9 @@ int main() {
                     }
                     else if (currentPortfolioSubState == VIEW_INTERFERENCE) {
                         if (!I_FlyOut) { I_FlyOut = true; I_FlyT = 0.f; }
+                    }
+                    else if (currentPortfolioSubState == VIEW_C64PRINT_NEW) {
+                        if (!c64Shatter && !c64ShatterRequest) { c64ShatterRequest = true; }
                     }
                     else {
                         int idx = (currentEffectIndex + 1) % NUM_EFFECTS;
