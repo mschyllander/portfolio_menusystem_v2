@@ -24,6 +24,9 @@
 #include <SDL_mixer.h>
 #include <GL/glew.h>
 #include <SDL_opengl.h>
+#include <GL/glu.h>
+#pragma comment(lib, "glu32.lib") // (MSVC) eller lägg till i Linker->Input
+
 #ifdef _WIN32
 #pragma comment(lib, "opengl32.lib")
 #pragma comment(lib, "glew32.lib")
@@ -40,6 +43,7 @@
 #include <sstream>
 #include <tuple>
 #include <random>
+
 
 struct Star;
 
@@ -401,12 +405,13 @@ static void c64pnUpdate(float dt) {
         } break;
 
         case C64PrintNew::FIREWORKS: {
+            // kick off fireworks one time when entering this phase
             if (!C64PN.startedFireworks) {
                 C64PN.startedFireworks = true;
+                startExitExplosion(false, false, 0);
             }
             if (C64PN.t >= C64PN.fireworksDur) {
                 C64PN.phase = C64PrintNew::DONE; C64PN.t = 0.f; C64PN.done = true;
-                startStarTransition(0);
             }
         } break;
 
@@ -905,7 +910,7 @@ const float SHAPE_DURATION = 10.0f;
 
 // --- Fireworks ---
 struct FireworkParticle {
-    float x, y, vx, vy, life, initialLife;
+    float x, y, vx, vy, life;
     SDL_Color color;
 };
 
@@ -913,11 +918,10 @@ std::vector<FireworkParticle> fireworks;  // riktig definition (inte extern)
 float nextBurst = 5.f;                   // riktig definition (inte extern)
 
 struct SmokeParticle {
-    float x, y, vx, vy, life, initialLife;
+    float x, y, vx, vy, life;
 };
 
 static std::vector<SmokeParticle> smoke;
-static SDL_Texture* explosionParticleTex = nullptr;
 
 
 struct StaticStar { int x, y; Uint8 baseColor; float alpha, alphaSpeed; int direction; };
@@ -1856,56 +1860,89 @@ static void renderEthanolMoleculeGL(float ax, float ay) {
         { 0.0f,  0.0f,  0.0f,  80, 80, 80 },   // C1
         { 1.5f,  0.0f,  0.0f,  80, 80, 80 },   // C2
         { 3.0f,  0.4f,  0.0f, 255,  0,  0 },   // O
-        { -0.7f,  0.9f,  0.0f, 255,255,255 },  // H's around first carbon
+        { -0.7f,  0.9f,  0.0f, 255,255,255 },  // H:s runt C1
         { -0.7f, -0.9f,  0.3f, 255,255,255 },
         { -0.7f, -0.9f, -0.3f, 255,255,255 },
-        { 2.2f,  0.9f,  0.0f, 255,255,255 },   // H's around second carbon
-        { 2.2f, -0.9f,  0.3f, 255,255,255 },
-        { 2.2f, -0.9f, -0.3f, 255,255,255 },
-        { 3.6f,  1.0f,  0.0f, 255,255,255 },   // Hydroxyl hydrogen
+        { 2.2f,   0.9f,  0.0f, 255,255,255 },  // H:s runt C2
+        { 2.2f,  -0.9f,  0.3f, 255,255,255 },
+        { 2.2f,  -0.9f, -0.3f, 255,255,255 },
+        { 3.6f,   1.0f,  0.0f, 255,255,255 },  // Hydroxyl-H
     };
     static const int bonds[][2] = {
-        {0,1}, {1,2},       // Carbon chain + oxygen
+        {0,1}, {1,2},
         {0,3}, {0,4}, {0,5},
         {1,6}, {1,7}, {1,8},
         {2,9}
     };
 
+    // ---- storlek på atomerna (justera fritt) ----
+    const float ATOM_SCALE = 1.f;  // gör ALLT större snabbt (prova 2.0–3.0)
+    auto atomRadius = [&](int idx)->float {
+        if (idx == 2)                return 0.45f * ATOM_SCALE; // O störst
+        if (idx == 0 || idx == 1)   return 0.34f * ATOM_SCALE; // C
+        return 0.26f * ATOM_SCALE;                             // H
+        };
+
     glLoadIdentity();
     glPushMatrix();
-    glDisable(GL_DEPTH_TEST);
+
+    glEnable(GL_DEPTH_TEST);              // korrekt occlusion
+    glDepthFunc(GL_LEQUAL);
+
     glTranslatef(0.f, 0.f, -5.f);
     glRotatef(ax * 57.2958f, 1.f, 0.f, 0.f);
     glRotatef(ay * 57.2958f, 0.f, 1.f, 0.f);
-    glDisable(GL_LIGHTING);
+
     glDisable(GL_TEXTURE_2D);
 
-    glBegin(GL_LINES);
+    // --- rita bindningar som “nudgar” från sfärernas ytor ---
+    glLineWidth(3.f);
     glColor3ub(200, 200, 200);
-    for (const auto& b : bonds) {
-        const Atom& a = atoms[b[0]];
-        const Atom& b2 = atoms[b[1]];
-        float sx = a.x + (b2.x - a.x) * 0.25f;
-        float sy = a.y + (b2.y - a.y) * 0.25f;
-        float sz = a.z + (b2.z - a.z) * 0.25f;
-        float ex = b2.x - (b2.x - a.x) * 0.25f;
-        float ey = b2.y - (b2.y - a.y) * 0.25f;
-        float ez = b2.z - (b2.z - a.z) * 0.25f;
+    glBegin(GL_LINES);
+    const int bondCount = sizeof(bonds) / sizeof(bonds[0]);
+    for (int i = 0; i < bondCount; ++i) {
+        int ia = bonds[i][0], ib = bonds[i][1];
+        const Atom& A = atoms[ia];
+        const Atom& B = atoms[ib];
+        float dx = B.x - A.x, dy = B.y - A.y, dz = B.z - A.z;
+        float len = sqrtf(dx * dx + dy * dy + dz * dz);
+        if (len < 1e-6f) continue;
+        dx /= len; dy /= len; dz /= len;
+
+        float rA = atomRadius(ia);
+        float rB = atomRadius(ib);
+
+        // start/slut på bindningen, precis utanför sfärerna
+        float sx = A.x + dx * rA;
+        float sy = A.y + dy * rA;
+        float sz = A.z + dz * rA;
+        float ex = B.x - dx * rB;
+        float ey = B.y - dy * rB;
+        float ez = B.z - dz * rB;
+
         glVertex3f(sx, sy, sz);
         glVertex3f(ex, ey, ez);
     }
     glEnd();
+    glLineWidth(1.f);
 
-    glPointSize(16.f);
-    glBegin(GL_POINTS);
-    for (const Atom& a : atoms) {
+    // --- rita atomer som riktiga sfärer ---
+    static GLUquadric* sQuad = nullptr;
+    if (!sQuad) { sQuad = gluNewQuadric(); gluQuadricNormals(sQuad, GLU_SMOOTH); }
+
+    glEnable(GL_LIGHTING);                // snygg ljussättning på sfärer
+    glEnable(GL_LIGHT0);
+
+    for (int i = 0; i < (int)(sizeof(atoms) / sizeof(atoms[0])); ++i) {
+        const Atom& a = atoms[i];
+        glPushMatrix();
+        glTranslatef(a.x, a.y, a.z);
         glColor3ub(a.r, a.g, a.b);
-        glVertex3f(a.x, a.y, a.z);
+        gluSphere(sQuad, atomRadius(i), 24, 24);  // segments: 24x24 räcker
+        glPopMatrix();
     }
-    glEnd();
-    glPointSize(1.f);
 
-    glEnable(GL_DEPTH_TEST);
+    glDisable(GL_LIGHTING);
     glPopMatrix();
 }
 
@@ -2404,8 +2441,7 @@ static void pongSpawnFireworksBursts(const SDL_Rect& frame) {
             float ang = randf(0.f, 6.2831853f);
             float spd = base + float(rand() % 180);
             SDL_Color col = rainbowColor(rand() / (float)RAND_MAX);
-            float life = 2.8f;
-            pongFireworks.push_back({ cx, cy, cosf(ang) * spd, sinf(ang) * spd, life, life, col });
+            pongFireworks.push_back({ cx, cy, cosf(ang) * spd, sinf(ang) * spd, 2.8f, col });
         }
     }
 }
@@ -2429,7 +2465,7 @@ static void pongRenderFireworks(SDL_Renderer* ren, const SDL_Rect& frame) {
     SDL_RenderSetClipRect(ren, &frame);
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_ADD);
     for (auto& p : pongFireworks) {
-        float t = std::max(0.f, std::min(1.f, p.life / p.initialLife));
+        float t = std::max(0.f, std::min(1.f, p.life / 2.8f));
         Uint8 a = (Uint8)(t * 160);
         int   r = 1 + (int)(t * 3.0f);
         SDL_SetRenderDrawColor(ren, p.color.r, p.color.g, p.color.b, a);
@@ -3062,9 +3098,11 @@ void updateFireworks(float dt)
             const float spd = 50.f + static_cast<float>(rand() % 150);
             const SDL_Color col = rainbowColor(rand() / (float)RAND_MAX);
 
-            float life = 3.5f;
-            fireworks.push_back({ cx, cy, cosf(ang) * spd, sinf(ang) * spd,
-                                  life, life, col });
+            fireworks.push_back(FireworkParticle{
+                cx, cy,
+                cosf(ang) * spd, sinf(ang) * spd,
+                3.5f, col
+                });
         }
     }
 
@@ -3078,7 +3116,7 @@ void updateFireworks(float dt)
         if (rand() % 2 == 0) {
             float svx = (rand() / (float)RAND_MAX - 0.5f) * 20.f;
             float svy = -40.f - (rand() % 20);
-            smoke.push_back({ p.x, p.y, svx, svy, 1.5f, 1.5f });
+            smoke.push_back({ p.x, p.y, svx, svy, 1.5f });
         }
 
         if (p.life <= 0.f) {
@@ -3109,60 +3147,31 @@ static void drawSmallFilledCircle(SDL_Renderer* ren, int cx, int cy, int radius)
     }
 }
 
-static SDL_Texture* getExplosionParticle(SDL_Renderer* ren) {
-    if (explosionParticleTex) return explosionParticleTex;
-    const int size = 64;
-    explosionParticleTex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA8888,
-        SDL_TEXTUREACCESS_STREAMING, size, size);
-    if (!explosionParticleTex) return nullptr;
-    SDL_SetTextureBlendMode(explosionParticleTex, SDL_BLENDMODE_ADD);
-    Uint32* pix; int pitch;
-    if (SDL_LockTexture(explosionParticleTex, nullptr, (void**)&pix, &pitch) == 0) {
-        for (int y = 0; y < size; ++y) {
-            for (int x = 0; x < size; ++x) {
-                float nx = (x - size / 2) / float(size / 2);
-                float ny = (y - size / 2) / float(size / 2);
-                float d = sqrtf(nx * nx + ny * ny);
-                float a = (d >= 1.f) ? 0.f : (1.f - d);
-                Uint8 alpha = Uint8(a * 255.f);
-                pix[y * (pitch / 4) + x] = (alpha << 24) | 0xFFFFFF;
-            }
-        }
-        SDL_UnlockTexture(explosionParticleTex);
-    }
-    return explosionParticleTex;
-}
-
 void renderFireworks(SDL_Renderer* ren, float dt) {
     updateFireworks(dt);
 
-    SDL_Texture* tex = getExplosionParticle(ren);
-    if (!tex) return;
-
-    // Smoke: blandning
-    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
     for (auto& s : smoke) {
-        float lifeFrac = s.life / s.initialLife;
+        float lifeFrac = s.life / 1.5f;
         Uint8 a = Uint8(lifeFrac * 120);
-        int r = 8 + int((1.f - lifeFrac) * 8.f);
-        SDL_SetTextureColorMod(tex, 80, 80, 80);
-        SDL_SetTextureAlphaMod(tex, a);
-        SDL_Rect dst = { int(s.x) - r, int(s.y) - r, r * 2, r * 2 };
-        SDL_RenderCopy(ren, tex, nullptr, &dst);
+        SDL_SetRenderDrawColor(ren, 80, 80, 80, a);
+        drawSmallFilledCircle(ren, int(s.x), int(s.y), 2);
     }
 
     // Använd ADD-blend för glow
-    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_ADD);
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_ADD);
 
     for (auto& p : fireworks) {
-        float lifeFrac = p.life / p.initialLife;  // 1.0 → nystart, 0.0 → död
-        Uint8 a = Uint8(lifeFrac * 255);
-        int r = 4 + int((1.f - lifeFrac) * 12.f);
-        SDL_SetTextureColorMod(tex, p.color.r, p.color.g, p.color.b);
-        SDL_SetTextureAlphaMod(tex, a);
-        SDL_Rect dst = { int(p.x) - r, int(p.y) - r, r * 2, r * 2 };
-        SDL_RenderCopy(ren, tex, nullptr, &dst);
+        // Livstidsbaserad alfa och radie
+        float lifeFrac = p.life / 3.5f;  // 1.0 → nystart, 0.0 → död
+        Uint8 a = Uint8(lifeFrac * 155);
+        int r = 1 + int(lifeFrac * 3.0f);
+
+        SDL_SetRenderDrawColor(ren, p.color.r, p.color.g, p.color.b, a);
+        drawSmallFilledCircle(ren, int(p.x), int(p.y), r);
     }
+
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
 }
 
 void renderLogoWithReflection(SDL_Renderer* ren, SDL_Texture* logo, int baseX) {
@@ -3365,8 +3374,7 @@ void startExitExplosion(bool returnToMenu, bool nextEffect, int nextIndex)
             float ang = (rand() / (float)RAND_MAX) * 2.f * PI;
             float spd = speedBase + static_cast<float>(rand() % 300);
             float life = 5.5f + static_cast<float>(rand() % 100) / 50.f;
-            fireworks.push_back({ x, y, cosf(ang) * spd, sinf(ang) * spd,
-                                  life, life, col });
+            fireworks.push_back({ x, y, cosf(ang) * spd, sinf(ang) * spd, life, col });
         }
     };
 
@@ -3374,7 +3382,7 @@ void startExitExplosion(bool returnToMenu, bool nextEffect, int nextIndex)
         // big central burst when exiting from menu
         for (int k = 0; k < 10; ++k) {
             SDL_Color col = rainbowColor(rand() / (float)RAND_MAX);
-            spawn(SCREEN_WIDTH / 2.f, SCREEN_HEIGHT / 2.f, col, 400, 500.f);
+            spawn(SCREEN_WIDTH / 2.f, SCREEN_HEIGHT / 2.f, col, 200, 400.f);
         }
     }
     else {
@@ -3382,7 +3390,7 @@ void startExitExplosion(bool returnToMenu, bool nextEffect, int nextIndex)
             float cx = SCREEN_WIDTH / 2.f + static_cast<float>((rand() % 400) - 200);
             float cy = SCREEN_HEIGHT / 3.f + static_cast<float>((rand() % 200) - 100);
             SDL_Color col = rainbowColor(rand() / (float)RAND_MAX);
-            spawn(cx, cy, col, 160, 300.f);
+            spawn(cx, cy, col, 120, 250.f);
         }
     }
     nextBurst = 0.6f;
