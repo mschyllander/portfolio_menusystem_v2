@@ -43,6 +43,8 @@
 
 struct Star;
 
+void startExitExplosion(bool returnToMenu = false, bool nextEffect = false, int nextIndex = 0);
+
 SDL_Window* gWindow = nullptr;
 SDL_GLContext gGL = nullptr;
 
@@ -1020,7 +1022,6 @@ void updatePongGame(float dt);
 void renderPongGame(SDL_Renderer* ren, float dt);       // main one
 void renderFireworks(SDL_Renderer*, float dt);
 void renderLogoWithReflection(SDL_Renderer*, SDL_Texture*, int baseX);
-void startExitExplosion(bool returnToMenu = false, bool nextEffect = false, int nextIndex = 0);
 void startStarTransition(int newIndex, bool toMenu = false);
 static void drawThickLine(SDL_Renderer* ren, int x1, int y1, int x2, int y2, int t);
 static void drawSmallFilledCircle(SDL_Renderer* ren, int cx, int cy, int radius);
@@ -4301,9 +4302,8 @@ int main() {
                     usedGLThisFrame = false; // presenterar via SDL
                 }
                 else {
-                    // Icke-fraktal: rita som vanligt (SDL)
-                    renderPortfolioEffect(renderer, deltaTime);
-                    usedGLThisFrame = false;
+                    // Rendera övriga effekter (kan använda OpenGL)
+                    usedGLThisFrame = renderPortfolioEffect(renderer, deltaTime);
                 }
             }
             else {
