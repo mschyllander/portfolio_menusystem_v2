@@ -3368,7 +3368,7 @@ void renderAboutC64Typewriter(SDL_Renderer* ren, float dt) {
         int chW, chH;
         TTF_SizeText(f, "M", &chW, &chH);
         SDL_Rect cur{ cursorX + 4, cursorY + chH - (chH - 4), chW / 2, chH - 6 };
-        SDL_SetRenderDrawColor(ren, 120, 255, 120, 255);
+        SDL_SetRenderDrawColor(ren, 255, 255, 255, 255); // white cursor
         SDL_RenderFillRect(ren, &cur);
     }
 
