@@ -1682,11 +1682,63 @@ void renderMenu(float dt, int mX, int mY, bool mClick) {
                     startStarTransition(0);
                 }
                 else if (i == 1) {
+
+                    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, SCREEN_WIDTH, SCREEN_HEIGHT, 32, SDL_PIXELFORMAT_ARGB8888);
+                    SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ARGB8888, surf->pixels, surf->pitch);
+
+                    c64Shards.clear();
+                    const int cols = 8, rows = 5;
+                    int pw = SCREEN_WIDTH / cols;
+                    int ph = SCREEN_HEIGHT / rows;
+                    Uint32* basePixels = static_cast<Uint32*>(surf->pixels);
+                    int basePitch = surf->pitch / 4;
+                    for (int y = 0; y < rows; ++y) {
+                        for (int x = 0; x < cols; ++x) {
+                            bool slash = rand() % 2;
+                            SDL_Rect cell{ x*pw, y*ph, pw, ph };
+                            for (int t = 0; t < 2; ++t) {
+                                SDL_Surface* tri = SDL_CreateRGBSurfaceWithFormat(0, pw, ph, 32, SDL_PIXELFORMAT_ARGB8888);
+                                SDL_FillRect(tri, nullptr, SDL_MapRGBA(tri->format, 0,0,0,0));
+                                Uint32* dstPixels = static_cast<Uint32*>(tri->pixels);
+                                for (int j = 0; j < ph; ++j) {
+                                    for (int i2 = 0; i2 < pw; ++i2) {
+                                        bool keep;
+                                        if (slash) keep = (t==0)?(i2 <= pw-1-j):(i2 > pw-1-j);
+                                        else       keep = (t==0)?(i2 <= j):(i2 > j);
+                                        if (keep) {
+                                            dstPixels[j*pw + i2] = basePixels[(cell.y + j)*basePitch + (cell.x + i2)];
+                                        }
+                                    }
+                                }
+                                Shard sh;
+                                sh.tex = SDL_CreateTextureFromSurface(renderer, tri);
+                                sh.w = pw; sh.h = ph;
+                                sh.x = float(cell.x);
+                                sh.y = float(cell.y);
+                                sh.vx = float(rand() % 400 - 200);
+                                sh.vy = float(rand() % 400 - 200);
+                                sh.ang = 0.f;
+                                sh.vang = float(rand() % 720 - 360);
+                                c64Shards.push_back(sh);
+                                SDL_FreeSurface(tri);
+                            }
+                        }
+                    }
+                    SDL_FreeSurface(surf);
+                    c64Shatter = true;
+                    c64ShatterRequest = false;
+                    c64PendingQuit = false;
+                    c64ShatterTime = 0.f;
+                    quitAfterShatter = true;
+                    currentState = STATE_PORTFOLIO;
+                    currentPortfolioSubState = VIEW_C64PRINT_NEW;
+
                     currentState = STATE_PORTFOLIO;
                     currentPortfolioSubState = VIEW_C64PRINT_NEW;
                     c64pnHardReset(SCREEN_WIDTH, SCREEN_HEIGHT);
                     c64PendingQuit = true;
                     quitAfterShatter = true;
+
                 }
             }
         }
@@ -1852,12 +1904,12 @@ static void renderEthanolMoleculeGL(float ax, float ay, float dist) {
         { 0.0f,  0.0f,  0.0f,  80, 80, 80 },   // C1
         { 1.5f,  0.0f,  0.0f,  80, 80, 80 },   // C2
         { 3.0f,  0.4f,  0.0f, 255,  0,  0 },   // O
-        { -0.7f,  0.9f,  0.0f, 255,255,255 },  // H:s runt C1
-        { -0.7f, -0.9f,  0.3f, 255,255,255 },
-        { -0.7f, -0.9f, -0.3f, 255,255,255 },
-        { 2.2f,   0.9f,  0.0f, 255,255,255 },  // H:s runt C2
-        { 2.2f,  -0.9f,  0.3f, 255,255,255 },
-        { 2.2f,  -0.9f, -0.3f, 255,255,255 },
+        { -0.7f,  1.2f,  0.0f, 255,255,255 },  // H:s runt C1
+        { -0.7f, -1.2f,  0.5f, 255,255,255 },
+        { -0.7f, -1.2f, -0.5f, 255,255,255 },
+        { 2.2f,   1.2f,  0.0f, 255,255,255 },  // H:s runt C2
+        { 2.2f,  -1.2f,  0.5f, 255,255,255 },
+        { 2.2f,  -1.2f, -0.5f, 255,255,255 },
         { 3.6f,   1.0f,  0.0f, 255,255,255 },  // Hydroxyl-H
     };
     static const int bonds[][2] = {
@@ -3612,7 +3664,7 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
     case VIEW_C64PRINT_NEW: {
         static bool inited = false;
 
-        if (!inited) {
+        if (!inited && !c64Shatter) {
             c64pnHardReset(SCREEN_WIDTH, SCREEN_HEIGHT);
             inited = true;
         }
@@ -3627,7 +3679,9 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
                 SDL_Rect dst{ int(s.x), int(s.y), s.w, s.h };
                 SDL_RenderCopyEx(renderer, s.tex, nullptr, &dst, s.ang, nullptr, SDL_FLIP_NONE);
             }
-            if (c64ShatterTime > 1.2f) {
+
+            if (c64ShatterTime > 1.8f) {
+
                 for (auto &s : c64Shards) SDL_DestroyTexture(s.tex);
                 c64Shards.clear();
                 c64Shatter = false;
