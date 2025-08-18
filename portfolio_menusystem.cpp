@@ -43,6 +43,8 @@
 
 struct Star;
 
+void startExitExplosion(bool returnToMenu = false, bool nextEffect = false, int nextIndex = 0);
+
 SDL_Window* gWindow = nullptr;
 SDL_GLContext gGL = nullptr;
 
@@ -399,13 +401,12 @@ static void c64pnUpdate(float dt) {
         } break;
 
         case C64PrintNew::FIREWORKS: {
-            // kick off fireworks one time when entering this phase
             if (!C64PN.startedFireworks) {
                 C64PN.startedFireworks = true;
-                startExitExplosion(false, false, 0);
             }
             if (C64PN.t >= C64PN.fireworksDur) {
                 C64PN.phase = C64PrintNew::DONE; C64PN.t = 0.f; C64PN.done = true;
+                startStarTransition(0);
             }
         } break;
 
@@ -814,19 +815,19 @@ GLuint mandelbrotVBO = 0;
 void renderFractalZoom(SDL_Renderer* ren, float dt, float scale = 1.0f);
 
 // --- GL->SDL blit helpers ---
-static SDL_Texture* gFractalTex = nullptr;
+static SDL_Texture* gGLTex = nullptr;
 
-static void ensureFractalTexture(SDL_Renderer* r, int w, int h) {
-    if (gFractalTex) {
+static void ensureGLTexture(SDL_Renderer* r, int w, int h) {
+    if (gGLTex) {
         int tw, th;
-        SDL_QueryTexture(gFractalTex, nullptr, nullptr, &tw, &th);
+        SDL_QueryTexture(gGLTex, nullptr, nullptr, &tw, &th);
         if (tw == w && th == h) return;
-        SDL_DestroyTexture(gFractalTex);
-        gFractalTex = nullptr;
+        SDL_DestroyTexture(gGLTex);
+        gGLTex = nullptr;
     }
-    gFractalTex = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888,
+    gGLTex = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888,
         SDL_TEXTUREACCESS_STREAMING, w, h);
-    SDL_SetTextureBlendMode(gFractalTex, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureBlendMode(gGLTex, SDL_BLENDMODE_BLEND);
 }
 
 // Läser backbuffer från GL och stoppar in i en SDL-textur (flippad så den hamnar rätt i SDL)
@@ -904,7 +905,7 @@ const float SHAPE_DURATION = 10.0f;
 
 // --- Fireworks ---
 struct FireworkParticle {
-    float x, y, vx, vy, life;
+    float x, y, vx, vy, life, initialLife;
     SDL_Color color;
 };
 
@@ -912,10 +913,11 @@ std::vector<FireworkParticle> fireworks;  // riktig definition (inte extern)
 float nextBurst = 5.f;                   // riktig definition (inte extern)
 
 struct SmokeParticle {
-    float x, y, vx, vy, life;
+    float x, y, vx, vy, life, initialLife;
 };
 
 static std::vector<SmokeParticle> smoke;
+static SDL_Texture* explosionParticleTex = nullptr;
 
 
 struct StaticStar { int x, y; Uint8 baseColor; float alpha, alphaSpeed; int direction; };
@@ -1020,7 +1022,6 @@ void updatePongGame(float dt);
 void renderPongGame(SDL_Renderer* ren, float dt);       // main one
 void renderFireworks(SDL_Renderer*, float dt);
 void renderLogoWithReflection(SDL_Renderer*, SDL_Texture*, int baseX);
-void startExitExplosion(bool returnToMenu = false, bool nextEffect = false, int nextIndex = 0);
 void startStarTransition(int newIndex, bool toMenu = false);
 static void drawThickLine(SDL_Renderer* ren, int x1, int y1, int x2, int y2, int t);
 static void drawSmallFilledCircle(SDL_Renderer* ren, int cx, int cy, int radius);
@@ -1884,12 +1885,18 @@ static void renderEthanolMoleculeGL(float ax, float ay) {
     for (const auto& b : bonds) {
         const Atom& a = atoms[b[0]];
         const Atom& b2 = atoms[b[1]];
-        glVertex3f(a.x, a.y, a.z);
-        glVertex3f(b2.x, b2.y, b2.z);
+        float sx = a.x + (b2.x - a.x) * 0.25f;
+        float sy = a.y + (b2.y - a.y) * 0.25f;
+        float sz = a.z + (b2.z - a.z) * 0.25f;
+        float ex = b2.x - (b2.x - a.x) * 0.25f;
+        float ey = b2.y - (b2.y - a.y) * 0.25f;
+        float ez = b2.z - (b2.z - a.z) * 0.25f;
+        glVertex3f(sx, sy, sz);
+        glVertex3f(ex, ey, ez);
     }
     glEnd();
 
-    glPointSize(8.f);
+    glPointSize(16.f);
     glBegin(GL_POINTS);
     for (const Atom& a : atoms) {
         glColor3ub(a.r, a.g, a.b);
@@ -2397,7 +2404,8 @@ static void pongSpawnFireworksBursts(const SDL_Rect& frame) {
             float ang = randf(0.f, 6.2831853f);
             float spd = base + float(rand() % 180);
             SDL_Color col = rainbowColor(rand() / (float)RAND_MAX);
-            pongFireworks.push_back({ cx, cy, cosf(ang) * spd, sinf(ang) * spd, 2.8f, col });
+            float life = 2.8f;
+            pongFireworks.push_back({ cx, cy, cosf(ang) * spd, sinf(ang) * spd, life, life, col });
         }
     }
 }
@@ -2421,7 +2429,7 @@ static void pongRenderFireworks(SDL_Renderer* ren, const SDL_Rect& frame) {
     SDL_RenderSetClipRect(ren, &frame);
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_ADD);
     for (auto& p : pongFireworks) {
-        float t = std::max(0.f, std::min(1.f, p.life / 2.8f));
+        float t = std::max(0.f, std::min(1.f, p.life / p.initialLife));
         Uint8 a = (Uint8)(t * 160);
         int   r = 1 + (int)(t * 3.0f);
         SDL_SetRenderDrawColor(ren, p.color.r, p.color.g, p.color.b, a);
@@ -3054,11 +3062,9 @@ void updateFireworks(float dt)
             const float spd = 50.f + static_cast<float>(rand() % 150);
             const SDL_Color col = rainbowColor(rand() / (float)RAND_MAX);
 
-            fireworks.push_back(FireworkParticle{
-                cx, cy,
-                cosf(ang) * spd, sinf(ang) * spd,
-                3.5f, col
-                });
+            float life = 3.5f;
+            fireworks.push_back({ cx, cy, cosf(ang) * spd, sinf(ang) * spd,
+                                  life, life, col });
         }
     }
 
@@ -3072,7 +3078,7 @@ void updateFireworks(float dt)
         if (rand() % 2 == 0) {
             float svx = (rand() / (float)RAND_MAX - 0.5f) * 20.f;
             float svy = -40.f - (rand() % 20);
-            smoke.push_back({ p.x, p.y, svx, svy, 1.5f });
+            smoke.push_back({ p.x, p.y, svx, svy, 1.5f, 1.5f });
         }
 
         if (p.life <= 0.f) {
@@ -3103,31 +3109,60 @@ static void drawSmallFilledCircle(SDL_Renderer* ren, int cx, int cy, int radius)
     }
 }
 
+static SDL_Texture* getExplosionParticle(SDL_Renderer* ren) {
+    if (explosionParticleTex) return explosionParticleTex;
+    const int size = 64;
+    explosionParticleTex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA8888,
+        SDL_TEXTUREACCESS_STREAMING, size, size);
+    if (!explosionParticleTex) return nullptr;
+    SDL_SetTextureBlendMode(explosionParticleTex, SDL_BLENDMODE_ADD);
+    Uint32* pix; int pitch;
+    if (SDL_LockTexture(explosionParticleTex, nullptr, (void**)&pix, &pitch) == 0) {
+        for (int y = 0; y < size; ++y) {
+            for (int x = 0; x < size; ++x) {
+                float nx = (x - size / 2) / float(size / 2);
+                float ny = (y - size / 2) / float(size / 2);
+                float d = sqrtf(nx * nx + ny * ny);
+                float a = (d >= 1.f) ? 0.f : (1.f - d);
+                Uint8 alpha = Uint8(a * 255.f);
+                pix[y * (pitch / 4) + x] = (alpha << 24) | 0xFFFFFF;
+            }
+        }
+        SDL_UnlockTexture(explosionParticleTex);
+    }
+    return explosionParticleTex;
+}
+
 void renderFireworks(SDL_Renderer* ren, float dt) {
     updateFireworks(dt);
 
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+    SDL_Texture* tex = getExplosionParticle(ren);
+    if (!tex) return;
+
+    // Smoke: blandning
+    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
     for (auto& s : smoke) {
-        float lifeFrac = s.life / 1.5f;
+        float lifeFrac = s.life / s.initialLife;
         Uint8 a = Uint8(lifeFrac * 120);
-        SDL_SetRenderDrawColor(ren, 80, 80, 80, a);
-        drawSmallFilledCircle(ren, int(s.x), int(s.y), 2);
+        int r = 8 + int((1.f - lifeFrac) * 8.f);
+        SDL_SetTextureColorMod(tex, 80, 80, 80);
+        SDL_SetTextureAlphaMod(tex, a);
+        SDL_Rect dst = { int(s.x) - r, int(s.y) - r, r * 2, r * 2 };
+        SDL_RenderCopy(ren, tex, nullptr, &dst);
     }
 
     // Använd ADD-blend för glow
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_ADD);
+    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_ADD);
 
     for (auto& p : fireworks) {
-        // Livstidsbaserad alfa och radie
-        float lifeFrac = p.life / 3.5f;  // 1.0 → nystart, 0.0 → död
-        Uint8 a = Uint8(lifeFrac * 155);
-        int r = 1 + int(lifeFrac * 3.0f);
-
-        SDL_SetRenderDrawColor(ren, p.color.r, p.color.g, p.color.b, a);
-        drawSmallFilledCircle(ren, int(p.x), int(p.y), r);
+        float lifeFrac = p.life / p.initialLife;  // 1.0 → nystart, 0.0 → död
+        Uint8 a = Uint8(lifeFrac * 255);
+        int r = 4 + int((1.f - lifeFrac) * 12.f);
+        SDL_SetTextureColorMod(tex, p.color.r, p.color.g, p.color.b);
+        SDL_SetTextureAlphaMod(tex, a);
+        SDL_Rect dst = { int(p.x) - r, int(p.y) - r, r * 2, r * 2 };
+        SDL_RenderCopy(ren, tex, nullptr, &dst);
     }
-
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
 }
 
 void renderLogoWithReflection(SDL_Renderer* ren, SDL_Texture* logo, int baseX) {
@@ -3330,7 +3365,8 @@ void startExitExplosion(bool returnToMenu, bool nextEffect, int nextIndex)
             float ang = (rand() / (float)RAND_MAX) * 2.f * PI;
             float spd = speedBase + static_cast<float>(rand() % 300);
             float life = 5.5f + static_cast<float>(rand() % 100) / 50.f;
-            fireworks.push_back({ x, y, cosf(ang) * spd, sinf(ang) * spd, life, col });
+            fireworks.push_back({ x, y, cosf(ang) * spd, sinf(ang) * spd,
+                                  life, life, col });
         }
     };
 
@@ -3338,7 +3374,7 @@ void startExitExplosion(bool returnToMenu, bool nextEffect, int nextIndex)
         // big central burst when exiting from menu
         for (int k = 0; k < 10; ++k) {
             SDL_Color col = rainbowColor(rand() / (float)RAND_MAX);
-            spawn(SCREEN_WIDTH / 2.f, SCREEN_HEIGHT / 2.f, col, 200, 400.f);
+            spawn(SCREEN_WIDTH / 2.f, SCREEN_HEIGHT / 2.f, col, 400, 500.f);
         }
     }
     else {
@@ -3346,7 +3382,7 @@ void startExitExplosion(bool returnToMenu, bool nextEffect, int nextIndex)
             float cx = SCREEN_WIDTH / 2.f + static_cast<float>((rand() % 400) - 200);
             float cy = SCREEN_HEIGHT / 3.f + static_cast<float>((rand() % 200) - 100);
             SDL_Color col = rainbowColor(rand() / (float)RAND_MAX);
-            spawn(cx, cy, col, 120, 250.f);
+            spawn(cx, cy, col, 160, 300.f);
         }
     }
     nextBurst = 0.6f;
@@ -3503,10 +3539,6 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
     }
 
     case VIEW_ETHANOL_MOLECULE: {
-        renderStars(ren, smallStars, { 180,180,255,255 });
-        renderStars(ren, bigStars, { 255,255,255,255 });
-        renderStaticStars(ren);
-
         float flyDist = 3.f;
         if (ET_FlyOut) {
             ET_FlyT += deltaTime;
@@ -3524,7 +3556,11 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
         glLoadIdentity();
         glTranslatef(0.f, 0.f, -flyDist);
         renderEthanolMoleculeGL(cubeAngleX, cubeAngleY);
-        usedGL = true;
+        ensureGLTexture(ren, SCREEN_WIDTH, SCREEN_HEIGHT);
+        glFlush();
+        blitGLToSDLTexture(gGLTex, SCREEN_WIDTH, SCREEN_HEIGHT);
+        SDL_Rect full{0,0,SCREEN_WIDTH,SCREEN_HEIGHT};
+        SDL_RenderCopy(ren, gGLTex, nullptr, &full);
         break;
     }
 
@@ -4287,11 +4323,11 @@ int main() {
                         // RITA FRAKTAL I GL, BLITTA TILL SDL, MEN PRESENTERA VIA SDL
                         ensureGLContextCurrent();                 // GL aktivt
                         renderFractalZoom(renderer, deltaTime);   // exakt EN frame, ingen intern while
-                        ensureFractalTexture(renderer, SCREEN_WIDTH, SCREEN_HEIGHT);
+                        ensureGLTexture(renderer, SCREEN_WIDTH, SCREEN_HEIGHT);
                         glFlush();
-                        blitGLToSDLTexture(gFractalTex, SCREEN_WIDTH, SCREEN_HEIGHT);
+                        blitGLToSDLTexture(gGLTex, SCREEN_WIDTH, SCREEN_HEIGHT);
                         SDL_Rect full = { 0,0,SCREEN_WIDTH,SCREEN_HEIGHT };
-                        SDL_RenderCopy(renderer, gFractalTex, nullptr, &full);
+                        SDL_RenderCopy(renderer, gGLTex, nullptr, &full);
                     }
                     else {
                         // Vi trigga transition: låt bakgrunden vara mörk denna frame
@@ -4301,9 +4337,8 @@ int main() {
                     usedGLThisFrame = false; // presenterar via SDL
                 }
                 else {
-                    // Icke-fraktal: rita som vanligt (SDL)
-                    renderPortfolioEffect(renderer, deltaTime);
-                    usedGLThisFrame = false;
+                    // Rendera övriga effekter (kan använda OpenGL)
+                    usedGLThisFrame = renderPortfolioEffect(renderer, deltaTime);
                 }
             }
             else {
