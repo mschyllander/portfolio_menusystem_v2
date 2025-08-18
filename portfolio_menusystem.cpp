@@ -369,7 +369,9 @@ static void c64pnUpdate(float dt) {
             if ((int)C64PN.typedLine.size() == (int)C64PN.toType.size()) {
                 // brief pause, then pretend user hits ENTER and RUN
                 if (C64PN.t > 0.25f) {
-                    C64PN.phase = C64PrintNew::RUNNING; C64PN.t = 0.f;
+                    C64PN.phase = C64PrintNew::RUNNING;
+                    C64PN.t = 0.f;
+                    C64PN.cursorOn = false; // hide cursor when pattern starts
                     c64pnResetGrid();
                 }
             }
@@ -430,7 +432,8 @@ static void c64pnDrawBootText(SDL_Renderer* r, TTF_Font* font) {
 
     // blinking cursor after READY.
     if (C64PN.cursorOn) {
-        SDL_Rect cur{ x + 6 * C64PN.cellW, y + C64PN.cellH/2, C64PN.cellW/2, C64PN.cellH/6 };
+        int cw = static_cast<int>(C64PN.cellW * 0.6f);
+        SDL_Rect cur{ x + 6 * C64PN.cellW, y, cw, C64PN.cellH };
         c64pnFillRect(r, cur, C64PN.cursorCol);
     }
 }
@@ -443,7 +446,8 @@ static void c64pnDrawTyping(SDL_Renderer* r, TTF_Font* font) {
     c64pnDrawText(r, font, line.c_str(), C64PN.textCol, x, y);
     if (C64PN.cursorOn) {
         int approxW = static_cast<int>(line.size() * (C64PN.cellW * 0.6f));
-        SDL_Rect cur{ x + approxW + 2, y + C64PN.cellH/2, C64PN.cellW/2, C64PN.cellH/6 };
+        int cw = static_cast<int>(C64PN.cellW * 0.6f);
+        SDL_Rect cur{ x + approxW, y, cw, C64PN.cellH };
         c64pnFillRect(r, cur, C64PN.cursorCol);
     }
 }
