@@ -1682,6 +1682,7 @@ void renderMenu(float dt, int mX, int mY, bool mClick) {
                     startStarTransition(0);
                 }
                 else if (i == 1) {
+
                     SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, SCREEN_WIDTH, SCREEN_HEIGHT, 32, SDL_PIXELFORMAT_ARGB8888);
                     SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ARGB8888, surf->pixels, surf->pitch);
 
@@ -1731,6 +1732,13 @@ void renderMenu(float dt, int mX, int mY, bool mClick) {
                     quitAfterShatter = true;
                     currentState = STATE_PORTFOLIO;
                     currentPortfolioSubState = VIEW_C64PRINT_NEW;
+
+                    currentState = STATE_PORTFOLIO;
+                    currentPortfolioSubState = VIEW_C64PRINT_NEW;
+                    c64pnHardReset(SCREEN_WIDTH, SCREEN_HEIGHT);
+                    c64PendingQuit = true;
+                    quitAfterShatter = true;
+
                 }
             }
         }
@@ -3671,7 +3679,9 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
                 SDL_Rect dst{ int(s.x), int(s.y), s.w, s.h };
                 SDL_RenderCopyEx(renderer, s.tex, nullptr, &dst, s.ang, nullptr, SDL_FLIP_NONE);
             }
+
             if (c64ShatterTime > 1.8f) {
+
                 for (auto &s : c64Shards) SDL_DestroyTexture(s.tex);
                 c64Shards.clear();
                 c64Shatter = false;
