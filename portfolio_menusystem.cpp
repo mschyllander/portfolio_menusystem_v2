@@ -1035,6 +1035,7 @@ TTF_Font* consoleFont = nullptr;
 TTF_Font* bigFont = nullptr;
 TTF_Font* titleFont = nullptr;
 TTF_Font* scrollFont = nullptr;
+TTF_Font* wireframeFont = nullptr;
 Mix_Chunk* hoverSound = nullptr;
 Mix_Chunk* bangSound = nullptr;
 Mix_Music* backgroundMusic = nullptr;
@@ -1399,7 +1400,7 @@ void startPortfolioEffect(PortfolioSubState st) {
         if (renderer) {
             SDL_Color white{ 255,255,255,255 };
             SDL_Color glow{ 255,255,0,255 };
-            TTF_Font* font = titleFont ? titleFont : bigFont;
+            TTF_Font* font = wireframeFont ? wireframeFont : bigFont;
             if (font) {
                 TTF_SetFontOutline(font, 2);
                 SDL_Surface* outline = TTF_RenderUTF8_Blended(font, "Morphing wireframe cube", glow);
@@ -3610,6 +3611,8 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
             }
         }
 
+        SDL_RenderSetClipRect(ren, nullptr);
+
         // --- Scrolltext fly-in och glas-shatter ---
         if (wfTextFlyIn && wfTextTexture && wfTextSurface) {
 
@@ -3617,8 +3620,8 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
             wfTextZ -= 3000.f * deltaTime;
             if (wfTextZ < 0.f) wfTextZ = 0.f;
             float scale = 500.f / (500.f + wfTextZ);
-            scale *= 60.f / wfTextSurface->h;
-            scale *= 4.f; // make landing text roughly four times larger
+            const float targetH = 240.f;
+            scale *= targetH / wfTextSurface->h;
             int w = int(wfTextSurface->w * scale);
             int h = int(wfTextSurface->h * scale);
             float wobble = sinf(wfTextTimer * 3.f) * 20.f;
@@ -4040,7 +4043,7 @@ int main() {
 
     // SDL_SetHint(SDL_HINT_RENDER_DRIVER, "opengl");
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
-    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0"); // nearest
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1"); // linear
 
 
     // --- Skapa fönster ---
@@ -4114,6 +4117,8 @@ int main() {
     PongFont = TTF_OpenFont("Roboto-VariableFont_wdth,wght.ttf", 25);
     if (menuFont) TTF_SetFontStyle(menuFont, TTF_STYLE_BOLD);
     if (bigFont)  TTF_SetFontStyle(bigFont, TTF_STYLE_BOLD);
+    wireframeFont = TTF_OpenFont("Roboto-VariableFont_wdth,wght.ttf", 240);
+    if (wireframeFont) TTF_SetFontStyle(wireframeFont, TTF_STYLE_BOLD);
     hoverSound = Mix_LoadWAV("hover.wav");
     bangSound = Mix_LoadWAV("break.wav");
 
@@ -4480,6 +4485,7 @@ int main() {
     TTF_CloseFont(bigFont);
     TTF_CloseFont(titleFont);
     TTF_CloseFont(scrollFont);
+    TTF_CloseFont(wireframeFont);
     TTF_Quit();
 
     SDL_DestroyTexture(logoTexture);
