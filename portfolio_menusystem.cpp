@@ -1076,6 +1076,15 @@ static bool quitAfterShatter = false;
 static bool shatterExitComplete = false;
 static float c64ShatterTime = 0.f;
 
+// --- Wireframe scrolltext ---
+static SDL_Texture* wfTextTexture = nullptr;
+static SDL_Surface* wfTextSurface = nullptr;
+static bool wfTextFlyIn = false;
+static bool wfTextShattering = false;
+static float wfTextZ = 20000.f;
+static float wfTextTimer = 0.f;
+static std::vector<Shard> wfTextShards;
+
 
 struct InterferenceCircle { float x, y, r, dx, dy; bool white; };
 std::vector<InterferenceCircle> interferenceCircles;
@@ -1386,6 +1395,23 @@ void startPortfolioEffect(PortfolioSubState st) {
 
     case VIEW_WIREFRAME_CUBE: {
         effectTimer = 0.f;
+        wfTextFlyIn = true;
+        wfTextShattering = false;
+        wfTextZ = 20000.f;
+        wfTextTimer = 0.f;
+        wfTextShards.clear();
+        if (wfTextTexture) { SDL_DestroyTexture(wfTextTexture); wfTextTexture = nullptr; }
+        if (wfTextSurface) { SDL_FreeSurface(wfTextSurface); wfTextSurface = nullptr; }
+        if (renderer) {
+            SDL_Color white{ 255,255,255,255 };
+            TTF_Font* font = titleFont ? titleFont : bigFont;
+            if (font) {
+                wfTextSurface = TTF_RenderUTF8_Blended(font, "Morphing wireframe cube", white);
+                if (wfTextSurface) {
+                    wfTextTexture = SDL_CreateTextureFromSurface(renderer, wfTextSurface);
+                }
+            }
+        }
         break;
     }
     case VIEW_ETHANOL_MOLECULE: {
@@ -3573,6 +3599,80 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
                     drawThickLine(ren, b1.x, b1.y, b2.x, b2.y, WF_LINE_THICKNESS);
                     drawThickLine(ren, t1.x, t1.y, b1.x, b1.y, WF_LINE_THICKNESS);
                 }
+            }
+        }
+
+        // --- Scrolltext fly-in och glas-shatter ---
+        if (wfTextFlyIn && wfTextTexture && wfTextSurface) {
+            wfTextTimer += deltaTime;
+            wfTextZ -= 6000.f * deltaTime;
+            if (wfTextZ < 0.f) wfTextZ = 0.f;
+            float scale = 500.f / (500.f + wfTextZ);
+            scale *= 60.f / wfTextSurface->h;
+            int w = int(wfTextSurface->w * scale);
+            int h = int(wfTextSurface->h * scale);
+            float wobble = sinf(wfTextTimer * 3.f) * 20.f;
+            SDL_Rect dst{ int(SCREEN_WIDTH / 2 - w / 2 + wobble), SCREEN_HEIGHT / 2 - h / 2, w, h };
+            SDL_RenderCopy(ren, wfTextTexture, nullptr, &dst);
+            if (wfTextZ <= 0.f) {
+                wfTextFlyIn = false;
+                wfTextShattering = true;
+                wfTextTimer = 0.f;
+                int cols = 8, rows = 2;
+                int pw = wfTextSurface->w / cols;
+                int ph = wfTextSurface->h / rows;
+                Uint32* basePixels = static_cast<Uint32*>(wfTextSurface->pixels);
+                int basePitch = wfTextSurface->pitch / 4;
+                float sx = SCREEN_WIDTH / 2.f - w / 2.f;
+                float sy = SCREEN_HEIGHT / 2.f - h / 2.f;
+                for (int y = 0; y < rows; ++y) {
+                    for (int x = 0; x < cols; ++x) {
+                        bool slash = rand() % 2;
+                        SDL_Rect cell{ x * pw, y * ph, pw, ph };
+                        for (int t = 0; t < 2; ++t) {
+                            SDL_Surface* tri = SDL_CreateRGBSurfaceWithFormat(0, pw, ph, 32, SDL_PIXELFORMAT_ARGB8888);
+                            SDL_FillRect(tri, nullptr, SDL_MapRGBA(tri->format, 0, 0, 0, 0));
+                            Uint32* dstPix = static_cast<Uint32*>(tri->pixels);
+                            for (int j = 0; j < ph; ++j) {
+                                for (int i = 0; i < pw; ++i) {
+                                    bool keep = slash ? ((t == 0) ? (i <= pw - 1 - j) : (i > pw - 1 - j))
+                                                       : ((t == 0) ? (i <= j) : (i > j));
+                                    if (keep) dstPix[j * pw + i] = basePixels[(cell.y + j) * basePitch + (cell.x + i)];
+                                }
+                            }
+                            Shard sh;
+                            sh.tex = SDL_CreateTextureFromSurface(ren, tri);
+                            sh.w = int(pw * scale);
+                            sh.h = int(ph * scale);
+                            sh.x = sx + cell.x * scale;
+                            sh.y = sy + cell.y * scale;
+                            sh.vx = float(rand() % 400 - 200);
+                            sh.vy = float(rand() % 400 - 200);
+                            sh.ang = 0.f;
+                            sh.vang = float(rand() % 720 - 360);
+                            wfTextShards.push_back(sh);
+                            SDL_FreeSurface(tri);
+                        }
+                    }
+                }
+                if (bangSound) Mix_PlayChannel(-1, bangSound, 0);
+                SDL_DestroyTexture(wfTextTexture); wfTextTexture = nullptr;
+            }
+        } else if (wfTextShattering) {
+            wfTextTimer += deltaTime;
+            for (auto& s : wfTextShards) {
+                s.vy += 600.f * deltaTime;
+                s.x += s.vx * deltaTime;
+                s.y += s.vy * deltaTime;
+                s.ang += s.vang * deltaTime;
+                SDL_Rect d{ int(s.x), int(s.y), s.w, s.h };
+                SDL_RenderCopyEx(ren, s.tex, nullptr, &d, s.ang, nullptr, SDL_FLIP_NONE);
+            }
+            if (wfTextTimer > 1.8f) {
+                for (auto& s : wfTextShards) SDL_DestroyTexture(s.tex);
+                wfTextShards.clear();
+                wfTextShattering = false;
+                if (wfTextSurface) { SDL_FreeSurface(wfTextSurface); wfTextSurface = nullptr; }
             }
         }
 
