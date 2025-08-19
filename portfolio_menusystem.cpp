@@ -1081,8 +1081,11 @@ static SDL_Texture* wfTextTexture = nullptr;
 static SDL_Surface* wfTextSurface = nullptr;
 static bool wfTextFlyIn = false;
 static bool wfTextShattering = false;
-static float wfTextZ = 20000.f;
+// Startavstånd för scrolltexten och timer för wobble/hold
+static const float WF_TEXT_START_Z = 20000.f;
+static float wfTextZ = WF_TEXT_START_Z;
 static float wfTextTimer = 0.f;
+static float wfTextHoldTimer = 0.f;
 static std::vector<Shard> wfTextShards;
 
 struct InterferenceCircle { float x, y, r, dx, dy; bool white; };
@@ -1387,18 +1390,34 @@ void startPortfolioEffect(PortfolioSubState st) {
         effectTimer = 0.f;
         wfTextFlyIn = true;
         wfTextShattering = false;
-        wfTextZ = 20000.f;
+        wfTextZ = WF_TEXT_START_Z;
         wfTextTimer = 0.f;
+        wfTextHoldTimer = 0.f;
         wfTextShards.clear();
         if (wfTextTexture) { SDL_DestroyTexture(wfTextTexture); wfTextTexture = nullptr; }
         if (wfTextSurface) { SDL_FreeSurface(wfTextSurface); wfTextSurface = nullptr; }
         if (renderer) {
             SDL_Color white{ 255,255,255,255 };
+            SDL_Color glow{ 255,255,0,255 };
             TTF_Font* font = titleFont ? titleFont : bigFont;
             if (font) {
-                wfTextSurface = TTF_RenderUTF8_Blended(font, "Morphing wireframe cube", white);
-                if (wfTextSurface) {
+                TTF_SetFontOutline(font, 2);
+                SDL_Surface* outline = TTF_RenderUTF8_Blended(font, "Morphing wireframe cube", glow);
+                TTF_SetFontOutline(font, 0);
+                SDL_Surface* text = TTF_RenderUTF8_Blended(font, "Morphing wireframe cube", white);
+                if (outline && text) {
+                    SDL_Rect r{ 2,2,text->w,text->h };
+                    SDL_SetSurfaceBlendMode(text, SDL_BLENDMODE_BLEND);
+                    SDL_BlitSurface(text, nullptr, outline, &r);
+                    SDL_FreeSurface(text);
+                    wfTextSurface = outline;
                     wfTextTexture = SDL_CreateTextureFromSurface(renderer, wfTextSurface);
+                } else {
+                    if (outline) SDL_FreeSurface(outline);
+                    if (text) {
+                        wfTextSurface = text;
+                        wfTextTexture = SDL_CreateTextureFromSurface(renderer, wfTextSurface);
+                    }
                 }
             }
         }
@@ -3595,7 +3614,7 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
         if (wfTextFlyIn && wfTextTexture && wfTextSurface) {
 
             wfTextTimer += deltaTime;
-            wfTextZ -= 6000.f * deltaTime;
+            wfTextZ -= 3000.f * deltaTime;
             if (wfTextZ < 0.f) wfTextZ = 0.f;
             float scale = 500.f / (500.f + wfTextZ);
             scale *= 60.f / wfTextSurface->h;
@@ -3603,54 +3622,62 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
             int w = int(wfTextSurface->w * scale);
             int h = int(wfTextSurface->h * scale);
             float wobble = sinf(wfTextTimer * 3.f) * 20.f;
-            SDL_Rect dst{ int(SCREEN_WIDTH / 2 - w / 2 + wobble), SCREEN_HEIGHT - h, w, h };
+            float progress = 1.f - wfTextZ / WF_TEXT_START_Z;
+            float startY = SCREEN_HEIGHT / 2.f - h / 2.f;
+            float endY = SCREEN_HEIGHT * 0.75f - h / 2.f;
+            float yPos = startY + (endY - startY) * progress;
+            SDL_Rect dst{ int(SCREEN_WIDTH / 2 - w / 2 + wobble), int(yPos), w, h };
 
             SDL_RenderCopy(ren, wfTextTexture, nullptr, &dst);
             if (wfTextZ <= 0.f) {
-                wfTextFlyIn = false;
-                wfTextShattering = true;
-                wfTextTimer = 0.f;
-                int cols = 8, rows = 2;
-                int pw = wfTextSurface->w / cols;
-                int ph = wfTextSurface->h / rows;
-                Uint32* basePixels = static_cast<Uint32*>(wfTextSurface->pixels);
-                int basePitch = wfTextSurface->pitch / 4;
-                float sx = SCREEN_WIDTH / 2.f - w / 2.f;
-                float sy = SCREEN_HEIGHT / 2.f - h / 2.f;
+                wfTextHoldTimer += deltaTime;
+                if (wfTextHoldTimer >= 1.f) {
+                    wfTextFlyIn = false;
+                    wfTextShattering = true;
+                    wfTextTimer = 0.f;
+                    wfTextHoldTimer = 0.f;
+                    int cols = 8, rows = 2;
+                    int pw = wfTextSurface->w / cols;
+                    int ph = wfTextSurface->h / rows;
+                    Uint32* basePixels = static_cast<Uint32*>(wfTextSurface->pixels);
+                    int basePitch = wfTextSurface->pitch / 4;
+                    float sx = float(dst.x);
+                    float sy = float(dst.y);
 
-                for (int y = 0; y < rows; ++y) {
-                    for (int x = 0; x < cols; ++x) {
-                        bool slash = rand() % 2;
-                        SDL_Rect cell{ x * pw, y * ph, pw, ph };
-                        for (int t = 0; t < 2; ++t) {
-                            SDL_Surface* tri = SDL_CreateRGBSurfaceWithFormat(0, pw, ph, 32, SDL_PIXELFORMAT_ARGB8888);
-                            SDL_FillRect(tri, nullptr, SDL_MapRGBA(tri->format, 0, 0, 0, 0));
-                            Uint32* dstPix = static_cast<Uint32*>(tri->pixels);
-                            for (int j = 0; j < ph; ++j) {
-                                for (int i = 0; i < pw; ++i) {
-                                    bool keep = slash ? ((t == 0) ? (i <= pw - 1 - j) : (i > pw - 1 - j))
-                                                       : ((t == 0) ? (i <= j) : (i > j));
-                                    if (keep) dstPix[j * pw + i] = basePixels[(cell.y + j) * basePitch + (cell.x + i)];
+                    for (int y = 0; y < rows; ++y) {
+                        for (int x = 0; x < cols; ++x) {
+                            bool slash = rand() % 2;
+                            SDL_Rect cell{ x * pw, y * ph, pw, ph };
+                            for (int t = 0; t < 2; ++t) {
+                                SDL_Surface* tri = SDL_CreateRGBSurfaceWithFormat(0, pw, ph, 32, SDL_PIXELFORMAT_ARGB8888);
+                                SDL_FillRect(tri, nullptr, SDL_MapRGBA(tri->format, 0, 0, 0, 0));
+                                Uint32* dstPix = static_cast<Uint32*>(tri->pixels);
+                                for (int j = 0; j < ph; ++j) {
+                                    for (int i = 0; i < pw; ++i) {
+                                        bool keep = slash ? ((t == 0) ? (i <= pw - 1 - j) : (i > pw - 1 - j))
+                                                           : ((t == 0) ? (i <= j) : (i > j));
+                                        if (keep) dstPix[j * pw + i] = basePixels[(cell.y + j) * basePitch + (cell.x + i)];
+                                    }
                                 }
-                            }
-                            Shard sh;
-                            sh.tex = SDL_CreateTextureFromSurface(ren, tri);
-                            sh.w = int(pw * scale);
-                            sh.h = int(ph * scale);
-                            sh.x = sx + cell.x * scale;
-                            sh.y = sy + cell.y * scale;
+                                Shard sh;
+                                sh.tex = SDL_CreateTextureFromSurface(ren, tri);
+                                sh.w = int(pw * scale);
+                                sh.h = int(ph * scale);
+                                sh.x = sx + cell.x * scale;
+                                sh.y = sy + cell.y * scale;
 
-                            sh.vx = float(rand() % 400 - 200);
-                            sh.vy = float(rand() % 400 - 200);
-                            sh.ang = 0.f;
-                            sh.vang = float(rand() % 720 - 360);
-                            wfTextShards.push_back(sh);
-                            SDL_FreeSurface(tri);
+                                sh.vx = float(rand() % 400 - 200);
+                                sh.vy = float(rand() % 400 - 200);
+                                sh.ang = 0.f;
+                                sh.vang = float(rand() % 720 - 360);
+                                wfTextShards.push_back(sh);
+                                SDL_FreeSurface(tri);
+                            }
                         }
                     }
+                    if (bangSound) Mix_PlayChannel(-1, bangSound, 0);
+                    SDL_DestroyTexture(wfTextTexture); wfTextTexture = nullptr;
                 }
-                if (bangSound) Mix_PlayChannel(-1, bangSound, 0);
-                SDL_DestroyTexture(wfTextTexture); wfTextTexture = nullptr;
             }
         } else if (wfTextShattering) {
             wfTextTimer += deltaTime;
