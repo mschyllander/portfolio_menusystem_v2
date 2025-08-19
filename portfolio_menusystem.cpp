@@ -3599,10 +3599,11 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
             if (wfTextZ < 0.f) wfTextZ = 0.f;
             float scale = 500.f / (500.f + wfTextZ);
             scale *= 60.f / wfTextSurface->h;
+            scale *= 4.f; // make landing text roughly four times larger
             int w = int(wfTextSurface->w * scale);
             int h = int(wfTextSurface->h * scale);
             float wobble = sinf(wfTextTimer * 3.f) * 20.f;
-            SDL_Rect dst{ int(SCREEN_WIDTH / 2 - w / 2 + wobble), SCREEN_HEIGHT / 2 - h / 2, w, h };
+            SDL_Rect dst{ int(SCREEN_WIDTH / 2 - w / 2 + wobble), SCREEN_HEIGHT - h, w, h };
 
             SDL_RenderCopy(ren, wfTextTexture, nullptr, &dst);
             if (wfTextZ <= 0.f) {
