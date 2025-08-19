@@ -1085,11 +1085,8 @@ static float wfTextZ = 20000.f;
 static float wfTextTimer = 0.f;
 static std::vector<Shard> wfTextShards;
 
-
 struct InterferenceCircle { float x, y, r, dx, dy; bool white; };
 std::vector<InterferenceCircle> interferenceCircles;
-
-
 
 static SDL_Point projectPointPanel(const Vec3& v, const SDL_Rect& panel, float fov = 500.f, float dist = 3.f) {
     float factor = fov / (dist + v.z);
@@ -1106,8 +1103,6 @@ static inline bool intersectY(const SDL_Point& p0, const SDL_Point& p1, int y, f
     x = p0.x + t * (p1.x - p0.x);
     return true;
 }
-
-
 
 // === C64 10 PRINT — tiny GL utils ===
 static GLuint makeShader(GLenum type, const char* src) {
@@ -1129,7 +1124,6 @@ static GLuint makeProgram(const char* vs, const char* fs) {
     glDeleteShader(v); glDeleteShader(f);
     return p;
 }
-
 
 // Fyll en triangel med plasmafärger via enkel scanline
 static void fillTrianglePlasma(SDL_Renderer* ren, SDL_Point a, SDL_Point b, SDL_Point c, float time) {
@@ -1193,7 +1187,6 @@ static void fillTrianglePlasmaClipped(SDL_Renderer* ren,
         }
     }
 }
-
 
 // Ritar sidytorna på ett prisma (sides) med plasma-textur (fyllda väggar, utan sömmar).
 static void renderPrismPlasmaFillSDL(SDL_Renderer* ren,
@@ -1278,7 +1271,6 @@ static void renderPrismPlasmaFillSDL(SDL_Renderer* ren,
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
 }
 
-
 void initInterference()
 {
     // Nollställ faser (om du använder dem någon annanstans)
@@ -1354,7 +1346,6 @@ void initInterference()
     }
 }
 
-
 int logoWidth = 0, logoHeight = 0;
 AppState currentState = STATE_MENU;
 PortfolioSubState currentPortfolioSubState = VIEW_WIREFRAME_CUBE;
@@ -1383,7 +1374,6 @@ void startBackgroundMusic() {
         currentMusic = backgroundMusic;
     }
 }
-
 
 void startPortfolioEffect(PortfolioSubState st) {
     currentPortfolioSubState = st;
@@ -1595,7 +1585,6 @@ static void drawCircleOutline(SDL_Renderer* ren,
         SDL_RenderDrawLines(ren, pts.data(), (int)pts.size());
     }
 }
-
 
 void fillRoundedRect(SDL_Renderer* ren, SDL_Rect rect, int r, SDL_Color col) {
     SDL_SetRenderDrawColor(ren, col.r, col.g, col.b, col.a);
@@ -3604,6 +3593,7 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
 
         // --- Scrolltext fly-in och glas-shatter ---
         if (wfTextFlyIn && wfTextTexture && wfTextSurface) {
+
             wfTextTimer += deltaTime;
             wfTextZ -= 6000.f * deltaTime;
             if (wfTextZ < 0.f) wfTextZ = 0.f;
@@ -3613,6 +3603,7 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
             int h = int(wfTextSurface->h * scale);
             float wobble = sinf(wfTextTimer * 3.f) * 20.f;
             SDL_Rect dst{ int(SCREEN_WIDTH / 2 - w / 2 + wobble), SCREEN_HEIGHT / 2 - h / 2, w, h };
+
             SDL_RenderCopy(ren, wfTextTexture, nullptr, &dst);
             if (wfTextZ <= 0.f) {
                 wfTextFlyIn = false;
@@ -3625,6 +3616,7 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
                 int basePitch = wfTextSurface->pitch / 4;
                 float sx = SCREEN_WIDTH / 2.f - w / 2.f;
                 float sy = SCREEN_HEIGHT / 2.f - h / 2.f;
+
                 for (int y = 0; y < rows; ++y) {
                     for (int x = 0; x < cols; ++x) {
                         bool slash = rand() % 2;
@@ -3646,6 +3638,7 @@ bool renderPortfolioEffect(SDL_Renderer* ren, float deltaTime) {
                             sh.h = int(ph * scale);
                             sh.x = sx + cell.x * scale;
                             sh.y = sy + cell.y * scale;
+
                             sh.vx = float(rand() % 400 - 200);
                             sh.vy = float(rand() % 400 - 200);
                             sh.ang = 0.f;
