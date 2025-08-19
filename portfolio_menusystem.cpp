@@ -239,7 +239,6 @@ static inline void ensureGLContextCurrent() {
 ============================================================== */
 
 // --- CRT Tuning ---
-static constexpr SDL_Color C64_WHITE = { 233,236,231,255 }; // "C64-vit" (Pepto/Colodore-lik)
 static float CRT_TEXT_ROW_DARKEN = 0.85f;  // var 0.65 – mindre nedtoning av varannan textrad
 static Uint8 CRT_DOT_OFF = 235;           // var 170 – svagare dotmask (mindre mörkning)
 static Uint8 CRT_SCANLINE_ALPHA_MAIN = 120;  // mer distinkta scanlines
@@ -928,8 +927,6 @@ static inline float wrapf(float a, float m) { a = fmodf(a, m); if (a < 0) a += m
 Vec3 rotateY(const Vec3& v, float angle);
 Vec3 rotateX(const Vec3& v, float angle);
 
-// drawThickLine is used in several renderers before its definition
-static void drawThickLine(SDL_Renderer* ren, int x1, int y1, int x2, int y2, int t);
 
 // Radien till en regelbunden k-hörning (circumradius = 1) i riktning theta.
 // Formel: r(θ) = cos(π/k) / cos( (θ mod 2π/k) - π/k )VIEW_WIREFRAME_CUBE
@@ -985,8 +982,6 @@ void initMenu();
 void renderMenu(float deltaTime, int mouseX, int mouseY, bool mouseClick);
 void initPortfolio();
 void renderPlasmaPolygon(float time);
-Vec3 rotateY(const Vec3&, float angle);
-Vec3 rotateX(const Vec3&, float angle);
 SDL_Point projectPoint(const Vec3&, int w, int h, float fov, float dist);
 
 void renderWireframeCube(SDL_Renderer*, float angleX, float angleY, SDL_Color);
@@ -1014,7 +1009,6 @@ void renderPongGame(SDL_Renderer* ren, float dt);       // main one
 void renderFireworks(SDL_Renderer*, float dt);
 void renderLogoWithReflection(SDL_Renderer*, SDL_Texture*, int baseX);
 void startStarTransition(int newIndex, bool toMenu = false);
-static void drawThickLine(SDL_Renderer* ren, int x1, int y1, int x2, int y2, int t);
 static void drawSmallFilledCircle(SDL_Renderer* ren, int cx, int cy, int radius);
 static void renderPrismSidesWithTexture(SDL_Renderer* ren, SDL_Texture* tex,
     int sides, float ax, float ay,
@@ -1426,6 +1420,39 @@ void startPortfolioEffect(PortfolioSubState st) {
     }
     case VIEW_ETHANOL_MOLECULE: {
         effectTimer = 0.f;
+        wfTextFlyIn = true;
+        wfTextShattering = false;
+        wfTextZ = WF_TEXT_START_Z;
+        wfTextTimer = 0.f;
+        wfTextHoldTimer = 0.f;
+        wfTextShards.clear();
+        if (wfTextTexture) { SDL_DestroyTexture(wfTextTexture); wfTextTexture = nullptr; }
+        if (wfTextSurface) { SDL_FreeSurface(wfTextSurface); wfTextSurface = nullptr; }
+        if (renderer) {
+            SDL_Color white{ 255,255,255,255 };
+            SDL_Color glow{ 255,255,0,255 };
+            TTF_Font* font = wireframeFont ? wireframeFont : bigFont;
+            if (font) {
+                TTF_SetFontOutline(font, 2);
+                SDL_Surface* outline = TTF_RenderUTF8_Blended(font, "Fyllehunden", glow);
+                TTF_SetFontOutline(font, 0);
+                SDL_Surface* text = TTF_RenderUTF8_Blended(font, "Fyllehunden", white);
+                if (outline && text) {
+                    SDL_Rect r{ 2,2,text->w,text->h };
+                    SDL_SetSurfaceBlendMode(text, SDL_BLENDMODE_BLEND);
+                    SDL_BlitSurface(text, nullptr, outline, &r);
+                    SDL_FreeSurface(text);
+                    wfTextSurface = outline;
+                    wfTextTexture = SDL_CreateTextureFromSurface(renderer, wfTextSurface);
+                } else {
+                    if (outline) SDL_FreeSurface(outline);
+                    if (text) {
+                        wfTextSurface = text;
+                        wfTextTexture = SDL_CreateTextureFromSurface(renderer, wfTextSurface);
+                    }
+                }
+            }
+        }
         break;
     }
     case VIEW_FRACTAL_ZOOM:
@@ -2216,59 +2243,6 @@ static void drawSolidPrism(int sides)
     glVertex3f(0.f, 0.f, -half);
     for (int i = sides; i >= 0; --i) {
         float th = i * 2.f * PI / sides;
-        glVertex3f(cosf(th), sinf(th), -half);
-    }
-    glEnd();
-}
-
-// Pyramid with a square base
-static void drawPyramid() {
-    const float half = 1.f;
-    glBegin(GL_TRIANGLES);
-    for (int i = 0; i < 4; ++i) {
-        float th1 = i * 0.5f * PI;
-        float th2 = (i + 1) * 0.5f * PI;
-        Vec3 v1{ cosf(th1), sinf(th1), -half };
-        Vec3 v2{ cosf(th2), sinf(th2), -half };
-        Vec3 apex{ 0.f,0.f,half };
-        Vec3 n = normalizeVec(cross(Vec3(v2.x - v1.x, v2.y - v1.y, 0.f), Vec3(apex.x - v1.x, apex.y - v1.y, apex.z - v1.z)));
-        glNormal3f(n.x, n.y, n.z);
-        glVertex3f(v1.x, v1.y, v1.z);
-        glVertex3f(v2.x, v2.y, v2.z);
-        glVertex3f(apex.x, apex.y, apex.z);
-    }
-    glEnd();
-    glBegin(GL_QUADS);
-    glNormal3f(0.f, 0.f, -1.f);
-    glVertex3f(-1.f, -1.f, -half);
-    glVertex3f(1.f, -1.f, -half);
-    glVertex3f(1.f, 1.f, -half);
-    glVertex3f(-1.f, 1.f, -half);
-    glEnd();
-}
-
-// Simple cone shape
-static void drawCone(int segs) {
-    const float half = 1.f;
-    glBegin(GL_TRIANGLES);
-    for (int i = 0; i < segs; ++i) {
-        float th1 = 2.f * PI * i / segs;
-        float th2 = 2.f * PI * (i + 1) / segs;
-        Vec3 v1{ cosf(th1), sinf(th1), -half };
-        Vec3 v2{ cosf(th2), sinf(th2), -half };
-        Vec3 apex{ 0.f,0.f,half };
-        Vec3 n = normalizeVec(cross(Vec3(v2.x - v1.x, v2.y - v1.y, 0.f), Vec3(apex.x - v1.x, apex.y - v1.y, apex.z - v1.z)));
-        glNormal3f(n.x, n.y, n.z);
-        glVertex3f(v1.x, v1.y, v1.z);
-        glVertex3f(v2.x, v2.y, v2.z);
-        glVertex3f(apex.x, apex.y, apex.z);
-    }
-    glEnd();
-    glBegin(GL_TRIANGLE_FAN);
-    glNormal3f(0.f, 0.f, -1.f);
-    glVertex3f(0.f, 0.f, -half);
-    for (int i = segs; i >= 0; --i) {
-        float th = 2.f * PI * i / segs;
         glVertex3f(cosf(th), sinf(th), -half);
     }
     glEnd();
