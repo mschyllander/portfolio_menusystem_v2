@@ -15,8 +15,53 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="portfolio_menusystem.cpp">
+    <ClCompile Include="src\portfolio_menusystem.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="assets\audio\backgroundmusic.wav">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="assets\audio\bang.wav">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="assets\audio\break.wav">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="assets\audio\hover.wav">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="assets\audio\musik1.wav">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="assets\audio\musik2.wav">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="assets\audio\musik3.wav">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="assets\audio\musik4.wav">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="assets\fonts\Roboto-VariableFont_wdth,wght.ttf">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="assets\images\logo.png">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="assets\shaders\interference.frag">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="assets\shaders\mandelbrot.frag">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="assets\shaders\mandelbrot.vert">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="README.md" />
+    <None Include="docs\archive\add_effects.patch" />
+    <None Include="docs\archive\COPY_BAKUP_DEMO.txt" />
+    <None Include="docs\archive\ovan.patch" />
   </ItemGroup>
 </Project>

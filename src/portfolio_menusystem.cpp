@@ -1,8 +1,4 @@
-﻿// OpenSans-Regular.ttf eller Roboto-VariableFont_wdth,wght.ttf
-// logo.png
-// backgroundmusic.wav
-// musik1.wav, musik2.wav, musik3.wav, musik4.wav
-
+﻿// Runtime assets live under assets/ so the repository root stays readable.
 /*
    _____    _____   _    _   _____    ______  __      __
   / ____|  / ____| | |  | | |  __ \  |  ____| \ \    / /
@@ -51,6 +47,17 @@ void startExitExplosion(bool returnToMenu = false, bool nextEffect = false, int 
 
 SDL_Window* gWindow = nullptr;
 SDL_GLContext gGL = nullptr;
+
+namespace AssetPath {
+    constexpr const char* Logo = "assets/images/logo.png";
+    constexpr const char* Font = "assets/fonts/Roboto-VariableFont_wdth,wght.ttf";
+    constexpr const char* BackgroundMusic = "assets/audio/backgroundmusic.wav";
+    constexpr const char* DemoMusic = "assets/audio/musik1.wav";
+    constexpr const char* HoverSound = "assets/audio/hover.wav";
+    constexpr const char* BreakSound = "assets/audio/break.wav";
+    constexpr const char* MandelbrotVertex = "assets/shaders/mandelbrot.vert";
+    constexpr const char* MandelbrotFragment = "assets/shaders/mandelbrot.frag";
+}
 
 static inline void fillRect(SDL_Renderer* r, int x, int y, int w, int h, SDL_Color c) {
     SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
@@ -858,7 +865,7 @@ void initFractalZoom() {
     if (mandelbrotVAO != 0) return;
 
     // Shader
-    mandelbrotShader = loadShader("mandelbrot.vert", "mandelbrot.frag");
+    mandelbrotShader = loadShader(AssetPath::MandelbrotVertex, AssetPath::MandelbrotFragment);
 
     // VAO + VBO
     float quadVertices[] = {
@@ -4002,8 +4009,8 @@ int main() {
     }
 
     gARGB = SDL_AllocFormat(SDL_PIXELFORMAT_ARGB8888);
-    backgroundMusic = Mix_LoadMUS("backgroundmusic.wav");
-    demoMusic = Mix_LoadMUS("musik1.wav");
+    backgroundMusic = Mix_LoadMUS(AssetPath::BackgroundMusic);
+    demoMusic = Mix_LoadMUS(AssetPath::DemoMusic);
     if (backgroundMusic) {
         Mix_PlayMusic(backgroundMusic, -1);
         currentMusic = backgroundMusic;
@@ -4021,7 +4028,7 @@ int main() {
 
 
     // --- Skapa fönster ---
-    SDL_Window* window = SDL_CreateWindow("title",
+    SDL_Window* window = SDL_CreateWindow("Portfolio Menu System",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         SCREEN_WIDTH, SCREEN_HEIGHT,
         SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL);
@@ -4080,21 +4087,21 @@ int main() {
     glEnable(GL_MULTISAMPLE);
 
     IMG_Init(IMG_INIT_PNG);
-    logoTexture = IMG_LoadTexture(renderer, "logo.png");
+    logoTexture = IMG_LoadTexture(renderer, AssetPath::Logo);
     if (logoTexture) SDL_QueryTexture(logoTexture, nullptr, nullptr, &logoWidth, &logoHeight);
 
-    menuFont = TTF_OpenFont("Roboto-VariableFont_wdth,wght.ttf", 50);
-    consoleFont = TTF_OpenFont("Roboto-VariableFont_wdth,wght.ttf", 30);
-    bigFont = TTF_OpenFont("Roboto-VariableFont_wdth,wght.ttf", 96);
-    titleFont = TTF_OpenFont("Roboto-VariableFont_wdth,wght.ttf", 25);
-    scrollFont = TTF_OpenFont("Roboto-VariableFont_wdth,wght.ttf", 30);
-    PongFont = TTF_OpenFont("Roboto-VariableFont_wdth,wght.ttf", 25);
+    menuFont = TTF_OpenFont(AssetPath::Font, 50);
+    consoleFont = TTF_OpenFont(AssetPath::Font, 30);
+    bigFont = TTF_OpenFont(AssetPath::Font, 96);
+    titleFont = TTF_OpenFont(AssetPath::Font, 25);
+    scrollFont = TTF_OpenFont(AssetPath::Font, 30);
+    PongFont = TTF_OpenFont(AssetPath::Font, 25);
     if (menuFont) TTF_SetFontStyle(menuFont, TTF_STYLE_BOLD);
     if (bigFont)  TTF_SetFontStyle(bigFont, TTF_STYLE_BOLD);
-    wireframeFont = TTF_OpenFont("Roboto-VariableFont_wdth,wght.ttf", 240);
+    wireframeFont = TTF_OpenFont(AssetPath::Font, 240);
     if (wireframeFont) TTF_SetFontStyle(wireframeFont, TTF_STYLE_BOLD);
-    hoverSound = Mix_LoadWAV("hover.wav");
-    bangSound = Mix_LoadWAV("break.wav");
+    hoverSound = Mix_LoadWAV(AssetPath::HoverSound);
+    bangSound = Mix_LoadWAV(AssetPath::BreakSound);
 
     // Init “plasma”-textur och blandningsläge
     gPlasma = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,

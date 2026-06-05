@@ -135,7 +135,26 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="portfolio_menusystem.cpp" />
+    <ClCompile Include="src\portfolio_menusystem.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="assets\audio\backgroundmusic.wav" />
+    <None Include="assets\audio\bang.wav" />
+    <None Include="assets\audio\break.wav" />
+    <None Include="assets\audio\hover.wav" />
+    <None Include="assets\audio\musik1.wav" />
+    <None Include="assets\audio\musik2.wav" />
+    <None Include="assets\audio\musik3.wav" />
+    <None Include="assets\audio\musik4.wav" />
+    <None Include="assets\fonts\Roboto-VariableFont_wdth,wght.ttf" />
+    <None Include="assets\images\logo.png" />
+    <None Include="assets\shaders\interference.frag" />
+    <None Include="assets\shaders\mandelbrot.frag" />
+    <None Include="assets\shaders\mandelbrot.vert" />
+    <None Include="docs\archive\add_effects.patch" />
+    <None Include="docs\archive\COPY_BAKUP_DEMO.txt" />
+    <None Include="docs\archive\ovan.patch" />
+    <None Include="README.md" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

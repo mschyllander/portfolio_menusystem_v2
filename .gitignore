@@ -362,7 +362,5 @@ FodyWeavers.xsd
 # Ignore patch, rejection, and stray files
 codex_changes.patch
 fix_portfolio.patch
-portfolio_menusystem.cpp.rej
-maxW)
-.dll
+*.rej
 
